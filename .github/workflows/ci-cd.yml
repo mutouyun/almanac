@@ -70,4 +70,4 @@ jobs:
           PORT="${{ secrets.DEPLOY_PORT }}"
           ssh -i ~/.ssh/deploy_key -p "${PORT:-22}" -o StrictHostKeyChecking=no \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "cd C:\services\almanac && nssm stop almanac && (if exist almanac.exe.bak del almanac.exe.bak) && (if exist almanac.exe ren almanac.exe almanac.exe.bak) && ren almanac-new.exe almanac.exe && nssm start almanac && timeout /t 3 /nobreak && nssm status almanac"
+            "cd C:\services\almanac && nssm stop almanac && (if exist almanac.exe.bak del almanac.exe.bak) && (if exist almanac.exe ren almanac.exe almanac.exe.bak) && ren almanac-new.exe almanac.exe && nssm start almanac && powershell -Command \"Start-Sleep -Seconds 3\" && nssm status almanac"

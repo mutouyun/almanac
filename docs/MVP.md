@@ -77,7 +77,7 @@ almanac/
 2. **前端 Hello 页**：初始化 Astro 工程 → 一个 `index.astro` → `npm run build` 产出 `dist`。
 3. **embed 集成**：用 Go `embed` 把 `dist` 打进二进制，根路径托管静态页 → `go build` 后单文件能同时提供页面与 `/health`。
 4. **CI**：`.github/workflows/ci-cd.yml` 加 build + test，push 到 main 自动触发。
-5. **CD**：CI 通过后，通过 SSH 把编译好的二进制传到服务器并重启服务 → 外部访问验证。
+5. **CD**：UT 通过后，通过 SCP 把编译好的二进制传到服务器 → 备份旧版 → 重启 Windows 服务 → `/health` 健康检查（失败则回滚）→ 外部访问验证。
 
 ## 6. CI/CD 设计
 
@@ -89,8 +89,36 @@ almanac/
 ### 阶段划分
 
 1. **Build**：检出代码 → 装 Node 构建 Astro（产出 `web/dist`）→ 装 Go 编译（将 dist embed 进二进制）。
-2. **Test**：`go test ./...`（MVP 阶段可先放一个占位测试，验证流程能跑）。
-3. **Deploy**（仅 main）：通过 SSH 将二进制传至服务器 → 重启服务。
+2. **Test（UT 质量闸门）**：`go test ./...`。测试在 GitHub Actions 的 runner（云端）上执行，**测试不过则不进入部署**。MVP 阶段可先放一个占位测试，验证闸门能跑。
+3. **Deploy（仅 main，且 Test 通过后）**：将已验证的二进制推至服务器并重启服务（详见下文）。
+
+> 说明：本项目无独立测试服务器。“测试”在云端 runner 完成，服务器只接收**已通过测试**的产物，直接正式部署。对个人项目而言这是合理且足够的权衡。
+
+### 部署方式（SCP + SSH）
+
+采用 **SCP 传文件 + SSH 执行重启**，在 GitHub Actions 中用现成 action（如 `appleboy/scp-action` 与 `appleboy/ssh-action`），无需手写大量命令。部署动作：
+
+1. `scp` 将新编译的 `almanac.exe` 传到服务器目标目录。
+2. `ssh` 登录服务器执行：备份旧版 → 替换新版 → 重启服务。
+
+### Windows 服务化管理（关键）
+
+目标服务器为 **Windows**，进程管理与 Linux 不同。将 almanac **注册为 Windows 服务**（推荐用 [NSSM](https://nssm.cc/)），带来：
+
+- 开机自启、崩溃自动拉起。
+- 部署重启动作统一为：`nssm restart almanac`（或 `sc stop/start`），比直接 kill 进程稳得多。
+
+### 部署步骤（服务器端）
+
+```
+1. 停服务：       nssm stop almanac
+2. 备份旧版：     almanac.exe -> almanac.exe.bak（用于回滚）
+3. 替换新版：     scp 传入的 almanac.exe 覆盖
+4. 起服务：       nssm start almanac
+5. 健康检查：     请求 /health，非 200 则回滚 almanac.exe.bak 并重启
+```
+
+> 回滚兵器：部署前先备份旧二进制。新版起不来时能立即换回 `.bak`。个人项目无需蓝绿部署，一份备份足以兜底。
 
 ### 🔐 密钥与安全
 

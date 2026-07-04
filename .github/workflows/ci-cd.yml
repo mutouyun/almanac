@@ -1,0 +1,78 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build (cross-compile for Windows)
+        run: GOOS=windows GOARCH=amd64 go build -o almanac.exe ./cmd/almanac
+
+      - name: Test
+        run: go test -v ./...
+
+      - name: Upload artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: almanac-windows
+          path: almanac.exe
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Server
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: almanac-windows
+
+      - name: Upload binary via SCP (to staging)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          source: "almanac.exe"
+          target: "C:/services/almanac/staging"
+
+      - name: Backup, swap and restart service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            cd C:\services\almanac
+            nssm stop almanac
+            if exist almanac.exe.bak del almanac.exe.bak
+            if exist almanac.exe ren almanac.exe almanac.exe.bak
+            move /y staging\almanac.exe almanac.exe
+            nssm start almanac
+            timeout /t 3 /nobreak
+            nssm status almanac

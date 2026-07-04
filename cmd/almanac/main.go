@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -50,6 +51,13 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+
+	// Serve the embedded frontend (Astro build output) at the root path.
+	// staticFS is provided by the build-tagged files (embed_dist.go /
+	// embed_stub.go) so the server works with or without a built frontend.
+	if sub, err := fs.Sub(staticFS, staticRoot); err == nil {
+		mux.Handle("/", http.FileServer(http.FS(sub)))
+	}
 
 	srv := &http.Server{
 		Addr:              listen,

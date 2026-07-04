@@ -19,14 +19,28 @@ jobs:
         with:
           go-version: '1.26'
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend (Astro)
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Embed frontend into backend
+        run: cp -r web/dist cmd/almanac/dist
+
       - name: Verify dependencies
         run: go mod verify
 
       - name: Vet
         run: go vet ./...
 
-      - name: Build (cross-compile for Windows)
-        run: GOOS=windows GOARCH=amd64 go build -o almanac.exe ./cmd/almanac
+      - name: Build (cross-compile for Windows, embed frontend)
+        run: GOOS=windows GOARCH=amd64 go build -tags embedfrontend -o almanac.exe ./cmd/almanac
 
       - name: Test
         run: go test -v ./...

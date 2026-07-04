@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/mutouyun/almanac/internal/store"
 )
 
 // healthResponse is the payload returned by the /health endpoint.
@@ -23,6 +25,13 @@ type healthResponse struct {
 
 // cstZone is China Standard Time (UTC+8), used for human-facing timestamps.
 var cstZone = time.FixedZone("CST", 8*60*60)
+
+// dbCheckResponse is the payload returned by the /db-check endpoint.
+type dbCheckResponse struct {
+	Status string `json:"status"`
+	Visits int64  `json:"visits"`
+	Time   string `json:"time"`
+}
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -36,9 +45,32 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// dbCheckHandler records a visit and returns the running total. It validates
+// that SQLite works and that data persists across deployments.
+func dbCheckHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		count, err := st.RecordVisit(time.Now().In(cstZone))
+		if err != nil {
+			http.Error(w, "database error", http.StatusInternalServerError)
+			log.Printf("db-check error: %v", err)
+			return
+		}
+		resp := dbCheckResponse{
+			Status: "ok",
+			Visits: count,
+			Time:   time.Now().In(cstZone).Format(time.RFC3339),
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		}
+	}
+}
+
 func main() {
 	// Listen address is configurable via flag or ADDR env var; defaults to :8080.
 	addr := flag.String("addr", "", "HTTP listen address, e.g. :8080")
+	dbPath := flag.String("db", "", "SQLite database file path")
 	flag.Parse()
 
 	listen := *addr
@@ -49,8 +81,24 @@ func main() {
 		listen = ":8080"
 	}
 
+	dbFile := *dbPath
+	if dbFile == "" {
+		dbFile = os.Getenv("DB_PATH")
+	}
+	if dbFile == "" {
+		dbFile = "data/almanac.db"
+	}
+
+	st, err := store.Open(dbFile)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer st.Close()
+	log.Printf("database ready at %s", dbFile)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.Handle("/db-check", dbCheckHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

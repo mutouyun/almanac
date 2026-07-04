@@ -50,29 +50,24 @@ jobs:
         with:
           name: almanac-windows
 
-      - name: Upload binary via SCP (to staging)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT }}
-          source: "almanac.exe"
-          target: "C:/services/almanac/staging"
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${{ secrets.DEPLOY_PORT }}"
+          ssh-keyscan -p "${PORT:-22}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload binary to staging via SCP
+        run: |
+          PORT="${{ secrets.DEPLOY_PORT }}"
+          scp -i ~/.ssh/deploy_key -P "${PORT:-22}" -o StrictHostKeyChecking=no \
+            almanac.exe \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:C:/services/almanac/almanac-new.exe"
 
       - name: Backup, swap and restart service
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT }}
-          script: |
-            cd C:\services\almanac
-            nssm stop almanac
-            if exist almanac.exe.bak del almanac.exe.bak
-            if exist almanac.exe ren almanac.exe almanac.exe.bak
-            move /y staging\almanac.exe almanac.exe
-            nssm start almanac
-            timeout /t 3 /nobreak
-            nssm status almanac
+        run: |
+          PORT="${{ secrets.DEPLOY_PORT }}"
+          ssh -i ~/.ssh/deploy_key -p "${PORT:-22}" -o StrictHostKeyChecking=no \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd C:\services\almanac && nssm stop almanac && (if exist almanac.exe.bak del almanac.exe.bak) && (if exist almanac.exe ren almanac.exe almanac.exe.bak) && ren almanac-new.exe almanac.exe && nssm start almanac && timeout /t 3 /nobreak && nssm status almanac"

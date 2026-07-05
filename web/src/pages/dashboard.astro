@@ -338,18 +338,41 @@ const title = '看板 · Almanac';
           if (!res.ok) return;
           const data = await res.json();
           const cats = data.categories || [];
-          catsExpense = cats.filter(c => c.direction === -1);
-          catsIncome = cats.filter(c => c.direction === 1);
+          catsExpense = treeOrder(cats.filter(c => c.direction === -1));
+          catsIncome = treeOrder(cats.filter(c => c.direction === 1));
         } catch (e) { /* dropdowns just stay empty on failure */ }
       }
 
+      // Reorder a flat category list into depth-first order so children sit
+      // directly under their parent. Input is already sorted by level, then
+      // sort_order, then id, so per-parent child order is preserved.
+      function treeOrder(list) {
+        const childrenOf = new Map();
+        for (const c of list) {
+          const key = c.parent_id == null ? 0 : c.parent_id;
+          if (!childrenOf.has(key)) childrenOf.set(key, []);
+          childrenOf.get(key).push(c);
+        }
+        const ordered = [];
+        const walk = (parentKey) => {
+          for (const c of childrenOf.get(parentKey) || []) {
+            ordered.push(c);
+            walk(c.id);
+          }
+        };
+        walk(0);
+        return ordered;
+      }
+
       // Build the <option> list for an entry given its direction and current id.
+      // Non-root categories are indented by level to show the hierarchy.
       function catOptions(isExpense, currentId) {
         const list = isExpense ? catsExpense : catsIncome;
         let opts = `<option value=""${!currentId ? ' selected' : ''}>未分类</option>`;
         for (const c of list) {
           const sel = c.id === currentId ? ' selected' : '';
-          opts += `<option value="${c.id}"${sel}>${escapeHTML(c.name)}</option>`;
+          const indent = c.level > 1 ? '\u3000'.repeat(c.level - 1) + '└ ' : '';
+          opts += `<option value="${c.id}"${sel}>${indent}${escapeHTML(c.name)}</option>`;
         }
         return opts;
       }

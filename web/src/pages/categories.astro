@@ -280,10 +280,13 @@ const title = '分类管理 · Almanac';
           }).join('');
       }
 
-      document.getElementById('c-parent').addEventListener('change', (e) => {
+      // Direction only applies to root categories; hide it once a parent is
+      // chosen (children inherit the parent's direction).
+      function syncDirVisibility() {
         const dirWrap = document.getElementById('dir-wrap');
-        dirWrap.hidden = e.target.value !== '';
-      });
+        dirWrap.hidden = document.getElementById('c-parent').value !== '';
+      }
+      document.getElementById('c-parent').addEventListener('change', syncDirVisibility);
 
       addForm.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -308,6 +311,9 @@ const title = '分类管理 · Almanac';
           addMsg.className = 'msg ok';
           addMsg.textContent = '✅ 创建成功';
           addForm.reset();
+          // reset() clears the parent select back to "root", so the direction
+          // field must be re-shown (reset does not fire a change event).
+          syncDirVisibility();
           setTimeout(() => { addMsg.textContent = ''; }, 2000);
           loadCategories();
         } catch (err) {

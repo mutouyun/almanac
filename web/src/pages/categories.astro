@@ -120,7 +120,7 @@ const title = '分类管理 · Almanac';
     </style>
   </head>
   <body>
-    <div id="gate">加载中…</div>
+    <div id="gate">加载中...</div>
     <div id="app" hidden>
       <header>
         <h1>🗂️ 分类管理</h1>
@@ -129,9 +129,9 @@ const title = '分类管理 · Almanac';
 
       <div class="card">
         <strong>分类树</strong>
-        <p class="muted">正则填裸关键词即可（如 <code>瑞幸</code>），命中即包含匹配；需精确匹配再手写 <code>^…$</code>。方向随父分类继承。</p>
+        <p class="muted">正则填裸关键词即可(如 <code>瑞幸</code>),命中即包含匹配;需精确匹配再手写 <code>^...$</code>。方向随父分类继承。</p>
         <div class="tree" id="tree"></div>
-        <div class="cat-empty" id="tree-empty" hidden>还没有分类，用下面的表单创建第一个。</div>
+        <div class="cat-empty" id="tree-empty" hidden>还没有分类,用下面的表单创建第一个。</div>
       </div>
 
       <div class="card">
@@ -139,22 +139,22 @@ const title = '分类管理 · Almanac';
         <form class="add-form" id="add-form">
           <div>
             <label for="c-name">名称</label>
-            <input id="c-name" type="text" required placeholder="如：餐饮" />
+            <input id="c-name" type="text" required placeholder="如:餐饮" />
           </div>
           <div>
-            <label for="c-parent">父分类（留空为根分类）</label>
+            <label for="c-parent">父分类(留空为根分类)</label>
             <select id="c-parent"></select>
           </div>
           <div id="dir-wrap">
-            <label for="c-dir">方向（根分类必选，子分类继承父级）</label>
+            <label for="c-dir">方向(根分类必选,子分类继承父级)</label>
             <select id="c-dir">
               <option value="-1">支出</option>
               <option value="1">收入</option>
             </select>
           </div>
           <div>
-            <label for="c-regex">匹配正则（可选，裸关键词）</label>
-            <input id="c-regex" type="text" placeholder="如：瑞幸|星巴克" />
+            <label for="c-regex">匹配正则(可选,裸关键词)</label>
+            <input id="c-regex" type="text" placeholder="如:瑞幸|星巴克" />
           </div>
           <button type="submit" id="add-btn">创建</button>
           <p class="msg" id="add-msg"></p>
@@ -170,11 +170,11 @@ const title = '分类管理 · Almanac';
         <input id="e-name" type="text" />
       </div>
       <div class="field">
-        <label for="e-regex">匹配正则（可选，裸关键词）</label>
-        <input id="e-regex" type="text" placeholder="如：瑞幸|星巴克" />
+        <label for="e-regex">匹配正则(可选,裸关键词)</label>
+        <input id="e-regex" type="text" placeholder="如:瑞幸|星巴克" />
       </div>
       <div class="field">
-        <label for="e-parent">父分类（只能选同方向；选“无”则提升为根）</label>
+        <label for="e-parent">父分类(只能选同方向;选"无"则提升为根)</label>
         <select id="e-parent"></select>
       </div>
       <p class="msg" id="edit-msg"></p>
@@ -273,9 +273,25 @@ const title = '分类管理 · Almanac';
 
       function updateParentSelect() {
         const sel = document.getElementById('c-parent');
+        // Depth-first order so each child sits directly under its parent
+        // (categories is flat, sorted by level then sort_order then id).
+        const childrenOf = new Map();
+        for (const c of categories) {
+          const key = c.parent_id == null ? 0 : c.parent_id;
+          if (!childrenOf.has(key)) childrenOf.set(key, []);
+          childrenOf.get(key).push(c);
+        }
+        const ordered = [];
+        const walk = (parentKey) => {
+          for (const c of childrenOf.get(parentKey) || []) {
+            ordered.push(c);
+            walk(c.id);
+          }
+        };
+        walk(0);
         sel.innerHTML = '<option value="">（无，作为根分类）</option>' +
-          categories.map(c => {
-            const indent = ' '.repeat((c.level - 1) * 2);
+          ordered.map(c => {
+            const indent = c.level > 1 ? '\u3000'.repeat(c.level - 1) + '└ ' : '';
             return `<option value="${c.id}">${indent}${escapeHTML(c.name)}</option>`;
           }).join('');
       }
@@ -337,14 +353,26 @@ const title = '分类管理 · Almanac';
         // (prevents cycles), plus a "no parent (root)" option.
         const descendants = collectDescendantIds(id);
         const forbidden = new Set([id, ...descendants]);
-        const opts = ['<option value="">（无，作为根分类）</option>'];
+        // Depth-first so children sit under their parent; keep same-direction
+        // only and exclude self + own descendants (cycle prevention).
+        const childrenOf = new Map();
         for (const x of categories) {
-          if (x.direction !== c.direction) continue;
-          if (forbidden.has(x.id)) continue;
-          const indent = '  '.repeat(Math.max(0, x.level - 1));
-          const sel = c.parent_id === x.id ? ' selected' : '';
-          opts.push(`<option value="${x.id}"${sel}>${indent}${escapeHTML(x.name)}</option>`);
+          const key = x.parent_id == null ? 0 : x.parent_id;
+          if (!childrenOf.has(key)) childrenOf.set(key, []);
+          childrenOf.get(key).push(x);
         }
+        const opts = ['<option value="">(无,作为根分类)</option>'];
+        const walk = (parentKey) => {
+          for (const x of childrenOf.get(parentKey) || []) {
+            if (x.direction === c.direction && !forbidden.has(x.id)) {
+              const indent = x.level > 1 ? '\u3000'.repeat(x.level - 1) + '└ ' : '';
+              const sel = c.parent_id === x.id ? ' selected' : '';
+              opts.push(`<option value="${x.id}"${sel}>${indent}${escapeHTML(x.name)}</option>`);
+            }
+            walk(x.id);
+          }
+        };
+        walk(0);
         document.getElementById('e-parent').innerHTML = opts.join('');
         dialog.showModal();
       };
@@ -414,11 +442,11 @@ const title = '分类管理 · Almanac';
       window.deleteCategory = function(id) {
         const c = categories.find(x => x.id === id);
         if (!c) return;
-        if (!confirm(`确定删除分类「${c.name}」？（带子分类的无法删除）`)) return;
+        if (!confirm(`确定删除分类「${c.name}」?(带子分类的无法删除)`)) return;
         fetch(`/api/categories/${id}`, { method: 'DELETE' })
           .then(r => {
             if (r.status === 409) {
-              alert('该分类还有子分类，请先删除子节点');
+              alert('该分类还有子分类,请先删除子节点');
               return Promise.reject();
             }
             return r.ok ? loadCategories() : Promise.reject();

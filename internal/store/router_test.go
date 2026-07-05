@@ -1,0 +1,162 @@
+package store
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+// newTestStore opens a fresh store in a temp dir and returns it with the seeded
+// admin user's id (user 1).
+func newTestStore(t *testing.T) (*Store, int64) {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	admin, err := s.UserByUsername("admin")
+	if err != nil {
+		t.Fatalf("lookup admin: %v", err)
+	}
+	return s, admin.ID
+}
+
+// mkcat creates a category and returns its id, failing the test on error.
+func mkcat(t *testing.T, s *Store, uid int64, parent *int64, name string, dir, sort int, regex string) int64 {
+	t.Helper()
+	id, err := s.CreateCategory(uid, parent, name, dir, sort, regex)
+	if err != nil {
+		t.Fatalf("create category %q: %v", name, err)
+	}
+	return id
+}
+
+// classify is a helper that fails on error and returns the matched id or 0.
+func classify(t *testing.T, s *Store, uid int64, cents int64, raw string) int64 {
+	t.Helper()
+	id, err := s.ClassifyEntry(uid, cents, raw)
+	if err != nil {
+		t.Fatalf("classify %q: %v", raw, err)
+	}
+	if id == nil {
+		return 0
+	}
+	return *id
+}
+
+// TestRouteContainsMatch: a bare keyword matches anywhere in the raw text
+// (unanchored "contains"), and the sign of the amount picks the direction.
+func TestRouteContainsMatch(t *testing.T) {
+	s, uid := newTestStore(t)
+	coffee := mkcat(t, s, uid, nil, "咖啡", -1, 0, "瑞幸")
+
+	if got := classify(t, s, uid, -1990, "瑞幸咖啡消费"); got != coffee {
+		t.Fatalf("contains match: got %d, want %d", got, coffee)
+	}
+	// No rule matches -> unclassified.
+	if got := classify(t, s, uid, -500, "星巴克"); got != 0 {
+		t.Fatalf("no match should be unclassified, got %d", got)
+	}
+}
+
+// TestRouteDirectionIsolation: an expense keyword must not match an income
+// entry even if the text matches, and vice versa.
+func TestRouteDirectionIsolation(t *testing.T) {
+	s, uid := newTestStore(t)
+	salary := mkcat(t, s, uid, nil, "工资", 1, 0, "公司")
+	reimburse := mkcat(t, s, uid, nil, "报销支出", -1, 0, "公司")
+
+	// Positive amount -> income direction -> salary.
+	if got := classify(t, s, uid, 500000, "公司转账"); got != salary {
+		t.Fatalf("income should match salary %d, got %d", salary, got)
+	}
+	// Negative amount -> expense direction -> reimburse.
+	if got := classify(t, s, uid, -500000, "公司转账"); got != reimburse {
+		t.Fatalf("expense should match reimburse %d, got %d", reimburse, got)
+	}
+}
+
+// TestRouteLevelPriority: a deeper (more specific) category wins over a
+// shallower one when both would match.
+func TestRouteLevelPriority(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "美团")
+	drink := mkcat(t, s, uid, &food, "饮品", -1, 0, "美团")
+
+	// Both level-1 食 and level-2 drink match "美团"; deeper wins.
+	if got := classify(t, s, uid, -3000, "美团外卖"); got != drink {
+		t.Fatalf("deeper category should win: got %d, want %d", got, drink)
+	}
+}
+
+// TestRouteSortOrderTiebreak: at the same level, lower sort_order wins.
+func TestRouteSortOrderTiebreak(t *testing.T) {
+	s, uid := newTestStore(t)
+	first := mkcat(t, s, uid, nil, "甲", -1, 1, "通用")
+	_ = mkcat(t, s, uid, nil, "乙", -1, 2, "通用")
+
+	if got := classify(t, s, uid, -100, "通用消费"); got != first {
+		t.Fatalf("lower sort_order should win: got %d, want %d", got, first)
+	}
+}
+
+// TestRouteAnchoredExact: a user-written ^...$ pattern is an exact match, not
+// contains.
+func TestRouteAnchoredExact(t *testing.T) {
+	s, uid := newTestStore(t)
+	exact := mkcat(t, s, uid, nil, "精确", -1, 0, "^充值$")
+
+	if got := classify(t, s, uid, -100, "充值"); got != exact {
+		t.Fatalf("anchored exact should match identical text: got %d", got)
+	}
+	if got := classify(t, s, uid, -100, "账户充值成功"); got != 0 {
+		t.Fatalf("anchored exact should NOT match substring, got %d", got)
+	}
+}
+
+// TestRouteCacheInvalidation: after adding/updating a rule the next
+// classification reflects the change (cache was invalidated).
+func TestRouteCacheInvalidation(t *testing.T) {
+	s, uid := newTestStore(t)
+	// Prime the cache with no matching rule.
+	if got := classify(t, s, uid, -100, "滴滴出行"); got != 0 {
+		t.Fatalf("expected unclassified before rule exists, got %d", got)
+	}
+	taxi := mkcat(t, s, uid, nil, "交通", -1, 0, "滴滴")
+	// Cache must have been invalidated by CreateCategory.
+	if got := classify(t, s, uid, -100, "滴滴出行"); got != taxi {
+		t.Fatalf("expected match after create invalidates cache, got %d", got)
+	}
+	// Update the regex; next classify must reflect it.
+	if err := s.UpdateCategory(uid, taxi, "交通", 0, "高德"); err != nil {
+		t.Fatalf("update category: %v", err)
+	}
+	if got := classify(t, s, uid, -100, "滴滴出行"); got != 0 {
+		t.Fatalf("old keyword should no longer match after update, got %d", got)
+	}
+	if got := classify(t, s, uid, -100, "高德打车"); got != taxi {
+		t.Fatalf("new keyword should match after update, got %d", got)
+	}
+}
+
+// TestInvalidRegexRejected: saving a category with an uncompilable pattern is
+// rejected at save time.
+func TestInvalidRegexRejected(t *testing.T) {
+	s, uid := newTestStore(t)
+	if _, err := s.CreateCategory(uid, nil, "坏", -1, 0, "[unclosed"); err != ErrInvalidRegex {
+		t.Fatalf("expected ErrInvalidRegex on create, got %v", err)
+	}
+	good := mkcat(t, s, uid, nil, "好", -1, 0, "正常")
+	if err := s.UpdateCategory(uid, good, "好", 0, "(broken"); err != ErrInvalidRegex {
+		t.Fatalf("expected ErrInvalidRegex on update, got %v", err)
+	}
+}
+
+// TestZeroAmountUnclassified: a zero amount never routes.
+func TestZeroAmountUnclassified(t *testing.T) {
+	s, uid := newTestStore(t)
+	mkcat(t, s, uid, nil, "任意", -1, 0, "x")
+	if got := classify(t, s, uid, 0, "x"); got != 0 {
+		t.Fatalf("zero amount must be unclassified, got %d", got)
+	}
+}

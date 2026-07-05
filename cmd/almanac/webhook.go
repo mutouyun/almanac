@@ -94,11 +94,13 @@ func webhookHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// MVP: no routing yet, so category_id stays NULL (unclassified).
+		// Route to a category if any rule matches.
+		categoryID := st.RouteEntry(u.ID, cents, req.Type)
+
 		id, err := st.InsertEntry(store.Entry{
 			UserID:      u.ID,
 			LedgerID:    ledgerID,
-			CategoryID:  nil,
+			CategoryID:  categoryID,
 			AmountCents: cents,
 			RawType:     req.Type,
 			RecordTime:  recordTime,
@@ -117,7 +119,7 @@ func webhookHandler(st *store.Store) http.HandlerFunc {
 			ID:          id,
 			AmountCents: cents,
 			RecordTime:  recordTime,
-			Classified:  false,
+			Classified:  categoryID != nil,
 		})
 	}
 }

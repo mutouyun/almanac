@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -37,6 +38,11 @@ var ErrCategoryNotFound = errors.New("category not found")
 // ErrMaxDepth is returned when creating a category would exceed level 5.
 var ErrMaxDepth = errors.New("category depth exceeds 5 levels")
 
+// ErrInvalidRegex is returned when a category's regex fails to compile. The
+// pattern is validated at save time so the routing engine never has to deal
+// with an uncompilable rule.
+var ErrInvalidRegex = errors.New("invalid regex pattern")
+
 // ErrUsernameTaken is returned when creating a user whose username already exists.
 var ErrUsernameTaken = errors.New("username already taken")
 
@@ -57,6 +63,12 @@ type User struct {
 // Store wraps the database handle.
 type Store struct {
 	db *sql.DB
+
+	// rules is the per-user compiled routing rule cache (see router.go).
+	// Lazily built on first classification and invalidated on any category
+	// mutation for that user.
+	rulesMu sync.RWMutex
+	rules   map[int64]*compiledRuleSet
 }
 
 // Open opens (or creates) the SQLite database at the given path, ensuring the
@@ -80,7 +92,7 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("enable foreign_keys: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, rules: make(map[int64]*compiledRuleSet)}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
@@ -724,6 +736,9 @@ ORDER BY level ASC, sort_order ASC, id ASC`, userID)
 // parentID is set, direction is forced to match the parent's (DB triggers also
 // enforce this and same-user ownership).
 func (s *Store) CreateCategory(userID int64, parentID *int64, name string, direction, sortOrder int, regex string) (int64, error) {
+	if err := validateRegex(regex); err != nil {
+		return 0, err
+	}
 	level := 1
 	if parentID != nil {
 		var pLevel, pDir int
@@ -760,12 +775,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	if err != nil {
 		return 0, fmt.Errorf("get category id: %w", err)
 	}
+	s.InvalidateRules(userID)
 	return id, nil
 }
 
 // UpdateCategory changes the mutable fields (name, regex, sort_order) of a
 // user's category. direction/parent_id/level are immutable here by design.
 func (s *Store) UpdateCategory(userID, id int64, name string, sortOrder int, regex string) error {
+	if err := validateRegex(regex); err != nil {
+		return err
+	}
 	var regexVal any
 	if regex != "" {
 		regexVal = regex
@@ -782,6 +801,7 @@ WHERE id = ? AND user_id = ?`,
 	if n == 0 {
 		return ErrCategoryNotFound
 	}
+	s.InvalidateRules(userID)
 	return nil
 }
 
@@ -806,6 +826,7 @@ func (s *Store) DeleteCategory(userID, id int64) error {
 	if n == 0 {
 		return ErrCategoryNotFound
 	}
+	s.InvalidateRules(userID)
 	return nil
 }
 

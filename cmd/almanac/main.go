@@ -404,6 +404,7 @@ type categoryRequest struct {
 	Direction int    `json:"direction"`  // 1 income / -1 expense (ignored on update, inherited when parent set)
 	Regex     string `json:"regex"`
 	SortOrder int    `json:"sort_order"`
+	Move      bool   `json:"move"` // when true on PUT, reparent to ParentID (nil = root)
 }
 
 // categoriesHandler serves GET (list) and POST (create) on /api/categories.
@@ -508,10 +509,36 @@ func categoryItemHandler(st *store.Store) http.HandlerFunc {
 					_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
 					return
 				}
+				if err == store.ErrInvalidRegex {
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid regex pattern"})
+					return
+				}
 				log.Printf("update category error: %v", err)
 				w.WriteHeader(http.StatusInternalServerError)
 				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
 				return
+			}
+			// Optionally reparent (move subtree) in the same request.
+			if req.Move {
+				if err := st.MoveCategory(u.ID, id, req.ParentID); err != nil {
+					switch err {
+					case store.ErrCategoryNotFound:
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(errorResponse{Error: "parent category not found"})
+					case store.ErrInvalidMove:
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid move: cycle or direction mismatch"})
+					case store.ErrMaxDepth:
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(errorResponse{Error: "category depth exceeds 5 levels"})
+					default:
+						log.Printf("move category error: %v", err)
+						w.WriteHeader(http.StatusInternalServerError)
+						_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+					}
+					return
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 

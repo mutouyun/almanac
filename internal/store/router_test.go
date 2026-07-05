@@ -295,6 +295,82 @@ func TestListEntriesCategoryPath(t *testing.T) {
 }
 
 // TestUpdateEntryCategoryCrossUser: user B cannot touch user A's entry.
+func TestMoveCategory(t *testing.T) {
+	s, uid := newTestStore(t)
+	// expense tree: A(root) -> B -> C ; and standalone root D
+	a := mkcat(t, s, uid, nil, "A", -1, 0, "")
+	b := mkcat(t, s, uid, &a, "B", -1, 0, "")
+	c := mkcat(t, s, uid, &b, "C", -1, 0, "")
+	d := mkcat(t, s, uid, nil, "D", -1, 0, "")
+	// income root E (different direction)
+	e := mkcat(t, s, uid, nil, "E", 1, 0, "")
+
+	levelOf := func(id int64) int {
+		cats, _ := s.ListCategories(uid)
+		for _, x := range cats {
+			if x.ID == id {
+				return x.Level
+			}
+		}
+		return -1
+	}
+
+	// Move B (with child C) under D: B becomes level 2, C cascades to level 3.
+	if err := s.MoveCategory(uid, b, &d); err != nil {
+		t.Fatalf("move B under D: %v", err)
+	}
+	if lv := levelOf(b); lv != 2 {
+		t.Fatalf("B level after move: got %d want 2", lv)
+	}
+	if lv := levelOf(c); lv != 3 {
+		t.Fatalf("C level should cascade: got %d want 3", lv)
+	}
+
+	// Cycle: move A under C (C is now a descendant of A? no, C moved with B under D).
+	// Build a clear cycle: move D under C -> D is ancestor of C now, so reject.
+	if err := s.MoveCategory(uid, d, &c); err != ErrInvalidMove {
+		t.Fatalf("expected ErrInvalidMove (cycle), got %v", err)
+	}
+	// Self-move.
+	if err := s.MoveCategory(uid, a, &a); err != ErrInvalidMove {
+		t.Fatalf("expected ErrInvalidMove (self), got %v", err)
+	}
+	// Cross-direction: move A (expense) under E (income) -> reject.
+	if err := s.MoveCategory(uid, a, &e); err != ErrInvalidMove {
+		t.Fatalf("expected ErrInvalidMove (direction), got %v", err)
+	}
+
+	// Promote B back to a root (nil parent) -> level 1, C -> level 2.
+	if err := s.MoveCategory(uid, b, nil); err != nil {
+		t.Fatalf("promote B to root: %v", err)
+	}
+	if lv := levelOf(b); lv != 1 {
+		t.Fatalf("B promoted level: got %d want 1", lv)
+	}
+	if lv := levelOf(c); lv != 2 {
+		t.Fatalf("C level after promote: got %d want 2", lv)
+	}
+}
+
+// TestMoveCategoryDepthLimit: moving a subtree that would push a descendant
+// past level 5 is rejected.
+func TestMoveCategoryDepthLimit(t *testing.T) {
+	s, uid := newTestStore(t)
+	// Deep chain L1..L4 (root .. level 4).
+	l1 := mkcat(t, s, uid, nil, "L1", -1, 0, "")
+	l2 := mkcat(t, s, uid, &l1, "L2", -1, 0, "")
+	l3 := mkcat(t, s, uid, &l2, "L3", -1, 0, "")
+	_ = mkcat(t, s, uid, &l3, "L4", -1, 0, "")
+	// Another chain M1 -> M2 (root, level 2).
+	m1 := mkcat(t, s, uid, nil, "M1", -1, 0, "")
+	m2 := mkcat(t, s, uid, &m1, "M2", -1, 0, "")
+	// Move L1 (height 4) under M2 (level 2) -> deepest would be 2+4=6 > 5.
+	if err := s.MoveCategory(uid, l1, &m2); err != ErrMaxDepth {
+		t.Fatalf("expected ErrMaxDepth, got %v", err)
+	}
+}
+
+// TestUpdateEntryCategoryCrossUser: user B cannot touch user A's entry.
 func TestUpdateEntryCategoryCrossUser(t *testing.T) {
 	s, uidA := newTestStore(t)
 	bID, err := s.CreateUser("bob", "secret123")

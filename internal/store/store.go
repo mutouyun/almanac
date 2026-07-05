@@ -51,6 +51,11 @@ var ErrEntryNotFound = errors.New("entry not found")
 // (income/expense) disagrees with the sign of the entry's amount.
 var ErrDirectionMismatch = errors.New("category direction does not match entry")
 
+// ErrInvalidMove is returned when a category move is illegal: moving a node
+// under itself or one of its own descendants (a cycle), or under a parent of a
+// different direction (direction is immutable and must be inherited).
+var ErrInvalidMove = errors.New("invalid category move")
+
 // ErrUsernameTaken is returned when creating a user whose username already exists.
 var ErrUsernameTaken = errors.New("username already taken")
 
@@ -884,6 +889,135 @@ WHERE id = ? AND user_id = ?`,
 	}
 	s.InvalidateRules(userID)
 	return nil
+}
+
+// MoveCategory reparents a category under newParentID (nil = make it a root),
+// recomputing its level and cascading the level shift to all descendants. The
+// move is rejected (ErrInvalidMove) when it would create a cycle (moving under
+// itself or a descendant) or cross directions (a different-direction parent).
+// ErrMaxDepth is returned when the resulting subtree would exceed level 5.
+// Runs in a single transaction.
+func (s *Store) MoveCategory(userID, id int64, newParentID *int64) error {
+	// Load the whole tree for this user once; validate and compute in memory.
+	cats, err := s.ListCategories(userID)
+	if err != nil {
+		return fmt.Errorf("load categories: %w", err)
+	}
+	byID := make(map[int64]Category, len(cats))
+	children := make(map[int64][]int64)
+	for _, c := range cats {
+		byID[c.ID] = c
+		if c.ParentID != nil {
+			children[*c.ParentID] = append(children[*c.ParentID], c.ID)
+		}
+	}
+	node, ok := byID[id]
+	if !ok {
+		return ErrCategoryNotFound
+	}
+
+	newLevel := 1
+	if newParentID != nil {
+		if *newParentID == id {
+			return ErrInvalidMove // cannot parent to self
+		}
+		parent, ok := byID[*newParentID]
+		if !ok {
+			return ErrCategoryNotFound
+		}
+		if parent.Direction != node.Direction {
+			return ErrInvalidMove // direction is immutable; parent must match
+		}
+		// Reject moving under one of the node's own descendants (cycle).
+		if isDescendant(children, id, *newParentID) {
+			return ErrInvalidMove
+		}
+		newLevel = parent.Level + 1
+	}
+
+	// Depth check: newLevel + (subtree height - 1) must stay <= 5.
+	if newLevel+subtreeHeight(children, byID, id)-1 > 5 {
+		return ErrMaxDepth
+	}
+
+	delta := newLevel - node.Level
+	if delta == 0 && sameParent(node.ParentID, newParentID) {
+		return nil // no-op
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin move tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().Format(time.RFC3339)
+	var parentVal any
+	if newParentID != nil {
+		parentVal = *newParentID
+	}
+	if _, err := tx.Exec(
+		"UPDATE categories SET parent_id = ?, level = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+		parentVal, newLevel, now, id, userID,
+	); err != nil {
+		return fmt.Errorf("move node: %w", err)
+	}
+	// Shift every descendant's level by the same delta.
+	if delta != 0 {
+		for _, descID := range collectDescendants(children, id) {
+			if _, err := tx.Exec(
+				"UPDATE categories SET level = level + ?, updated_at = ? WHERE id = ? AND user_id = ?",
+				delta, now, descID, userID,
+			); err != nil {
+				return fmt.Errorf("shift descendant level: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit move: %w", err)
+	}
+	s.InvalidateRules(userID)
+	return nil
+}
+
+// isDescendant reports whether target is in the subtree rooted at ancestor.
+func isDescendant(children map[int64][]int64, ancestor, target int64) bool {
+	for _, c := range children[ancestor] {
+		if c == target || isDescendant(children, c, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectDescendants returns all ids in the subtree below root (excluding root).
+func collectDescendants(children map[int64][]int64, root int64) []int64 {
+	var out []int64
+	for _, c := range children[root] {
+		out = append(out, c)
+		out = append(out, collectDescendants(children, c)...)
+	}
+	return out
+}
+
+// subtreeHeight returns the number of levels in the subtree rooted at id
+// (a leaf has height 1).
+func subtreeHeight(children map[int64][]int64, byID map[int64]Category, id int64) int {
+	max := 1
+	for _, c := range children[id] {
+		if h := 1 + subtreeHeight(children, byID, c); h > max {
+			max = h
+		}
+	}
+	return max
+}
+
+// sameParent reports whether two nullable parent ids are equal.
+func sameParent(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 // DeleteCategory removes a leaf category. If the category still has children

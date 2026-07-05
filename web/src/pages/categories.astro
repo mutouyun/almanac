@@ -46,6 +46,7 @@ const title = '分类管理 · Almanac';
       }
       .cat-node:first-child { border-top: none; }
       .cat-name { font-weight: 500; }
+      .cat-branch { color: #aaa; font-size: 0.85rem; margin-right: -0.2rem; }
       .cat-badge {
         font-size: 0.7rem;
         padding: 0.1rem 0.5rem;
@@ -94,6 +95,28 @@ const title = '分类管理 · Almanac';
       .msg { font-size: 0.85rem; min-height: 1.2em; }
       .msg.ok { color: #16a34a; }
       .msg.err { color: #dc2626; }
+      dialog#edit-dialog {
+        border: 1px solid #8884;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 24rem;
+        width: 90%;
+      }
+      dialog#edit-dialog::backdrop { background: #0006; }
+      dialog#edit-dialog h3 { margin: 0 0 1rem; font-size: 1.1rem; }
+      dialog#edit-dialog .field { display: grid; gap: 0.3rem; margin-bottom: 0.9rem; }
+      dialog#edit-dialog label { font-size: 0.8rem; color: #888; }
+      dialog#edit-dialog input, dialog#edit-dialog select {
+        width: 100%; box-sizing: border-box; padding: 0.5rem 0.7rem;
+        border: 1px solid #8884; border-radius: 8px; font-size: 0.95rem;
+        background: Field; color: FieldText;
+      }
+      dialog#edit-dialog .actions { display: flex; gap: 0.6rem; justify-content: flex-end; margin-top: 1rem; }
+      dialog#edit-dialog button {
+        padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; border: 1px solid #8884;
+        background: transparent; color: inherit;
+      }
+      dialog#edit-dialog button.primary { background: #2563eb; color: #fff; border: none; }
     </style>
   </head>
   <body>
@@ -138,6 +161,28 @@ const title = '分类管理 · Almanac';
         </form>
       </div>
     </div>
+
+    <dialog id="edit-dialog">
+      <h3>编辑分类</h3>
+      <input type="hidden" id="e-id" />
+      <div class="field">
+        <label for="e-name">名称</label>
+        <input id="e-name" type="text" />
+      </div>
+      <div class="field">
+        <label for="e-regex">匹配正则（可选，裸关键词）</label>
+        <input id="e-regex" type="text" placeholder="如：瑞幸|星巴克" />
+      </div>
+      <div class="field">
+        <label for="e-parent">父分类（只能选同方向；选“无”则提升为根）</label>
+        <select id="e-parent"></select>
+      </div>
+      <p class="msg" id="edit-msg"></p>
+      <div class="actions">
+        <button id="edit-cancel" type="button">取消</button>
+        <button id="edit-save" type="button" class="primary">保存</button>
+      </div>
+    </dialog>
     <script>
       const gate = document.getElementById('gate');
       const app = document.getElementById('app');
@@ -182,22 +227,48 @@ const title = '分类管理 · Almanac';
           return;
         }
         treeEmpty.hidden = true;
-        const html = categories.map(c => {
-          const indent = (c.level - 1) * 1.5;
-          const dirClass = c.direction === 1 ? 'income' : 'expense';
-          const dirText = c.direction === 1 ? '收入' : '支出';
-          const regex = c.regex ? `<span class="cat-regex">${escapeHTML(c.regex)}</span>` : '';
-          return `<div class="cat-node" style="padding-left:${indent}rem;">
-            <span class="cat-name">${escapeHTML(c.name)}</span>
-            <span class="cat-badge ${dirClass}">${dirText}</span>
-            ${regex}
-            <div class="cat-actions">
-              <button onclick="editCategory(${c.id})">改</button>
-              <button onclick="deleteCategory(${c.id})">删</button>
-            </div>
-          </div>`;
-        }).join('');
-        tree.innerHTML = html;
+
+        // Build parent -> children index, then walk depth-first so each child
+        // renders directly beneath its parent (siblings by sort_order, id).
+        const childrenOf = new Map();
+        for (const c of categories) {
+          const key = c.parent_id == null ? 0 : c.parent_id;
+          if (!childrenOf.has(key)) childrenOf.set(key, []);
+          childrenOf.get(key).push(c);
+        }
+        for (const list of childrenOf.values()) {
+          list.sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id));
+        }
+
+        const rows = [];
+        const walk = (parentKey, depth) => {
+          const kids = childrenOf.get(parentKey) || [];
+          for (const c of kids) {
+            rows.push(nodeHTML(c, depth));
+            walk(c.id, depth + 1);
+          }
+        };
+        walk(0, 0);
+        tree.innerHTML = rows.join('');
+      }
+
+      // Render one category row at the given tree depth (0 = root).
+      function nodeHTML(c, depth) {
+        const indent = depth * 1.5;
+        const dirClass = c.direction === 1 ? 'income' : 'expense';
+        const dirText = c.direction === 1 ? '收入' : '支出';
+        const branch = depth > 0 ? '<span class="cat-branch">└</span>' : '';
+        const regex = c.regex ? `<span class="cat-regex">${escapeHTML(c.regex)}</span>` : '';
+        return `<div class="cat-node" style="padding-left:${indent}rem;">
+          ${branch}
+          <span class="cat-name">${escapeHTML(c.name)}</span>
+          <span class="cat-badge ${dirClass}">${dirText}</span>
+          ${regex}
+          <div class="cat-actions">
+            <button onclick="editCategory(${c.id})">改</button>
+            <button onclick="deleteCategory(${c.id})">删</button>
+          </div>
+        </div>`;
       }
 
       function updateParentSelect() {
@@ -248,16 +319,91 @@ const title = '分类管理 · Almanac';
       window.editCategory = function(id) {
         const c = categories.find(x => x.id === id);
         if (!c) return;
-        const newName = prompt('修改名称：', c.name);
-        if (!newName || newName === c.name) return;
-        fetch(`/api/categories/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: newName, regex: c.regex, sort_order: c.sort_order }),
-        })
-          .then(r => r.ok ? loadCategories() : Promise.reject())
-          .catch(() => alert('修改失败'));
+        const dialog = document.getElementById('edit-dialog');
+        const editMsg = document.getElementById('edit-msg');
+        editMsg.textContent = '';
+        editMsg.className = 'msg';
+        document.getElementById('e-id').value = c.id;
+        document.getElementById('e-name').value = c.name;
+        document.getElementById('e-regex').value = c.regex || '';
+
+        // Parent options: same direction only, exclude self and own descendants
+        // (prevents cycles), plus a "no parent (root)" option.
+        const descendants = collectDescendantIds(id);
+        const forbidden = new Set([id, ...descendants]);
+        const opts = ['<option value="">（无，作为根分类）</option>'];
+        for (const x of categories) {
+          if (x.direction !== c.direction) continue;
+          if (forbidden.has(x.id)) continue;
+          const indent = '  '.repeat(Math.max(0, x.level - 1));
+          const sel = c.parent_id === x.id ? ' selected' : '';
+          opts.push(`<option value="${x.id}"${sel}>${indent}${escapeHTML(x.name)}</option>`);
+        }
+        document.getElementById('e-parent').innerHTML = opts.join('');
+        dialog.showModal();
       };
+
+      // Collect all descendant ids of a node (for cycle-prevention in the UI).
+      function collectDescendantIds(rootId) {
+        const childrenOf = new Map();
+        for (const c of categories) {
+          const key = c.parent_id == null ? 0 : c.parent_id;
+          if (!childrenOf.has(key)) childrenOf.set(key, []);
+          childrenOf.get(key).push(c.id);
+        }
+        const out = [];
+        const walk = (pid) => {
+          for (const kid of (childrenOf.get(pid) || [])) {
+            out.push(kid);
+            walk(kid);
+          }
+        };
+        walk(rootId);
+        return out;
+      }
+
+      document.getElementById('edit-cancel').addEventListener('click', () => {
+        document.getElementById('edit-dialog').close();
+      });
+
+      document.getElementById('edit-save').addEventListener('click', async () => {
+        const id = parseInt(document.getElementById('e-id').value, 10);
+        const c = categories.find(x => x.id === id);
+        if (!c) return;
+        const editMsg = document.getElementById('edit-msg');
+        const name = document.getElementById('e-name').value.trim();
+        const regex = document.getElementById('e-regex').value.trim();
+        const parentVal = document.getElementById('e-parent').value;
+        const newParent = parentVal ? parseInt(parentVal, 10) : null;
+        if (!name) {
+          editMsg.className = 'msg err';
+          editMsg.textContent = '名称不能为空';
+          return;
+        }
+        // Only send move=true when the parent actually changed.
+        const curParent = c.parent_id == null ? null : c.parent_id;
+        const move = curParent !== newParent;
+        const body = {
+          name, regex, sort_order: c.sort_order,
+          move, parent_id: newParent,
+        };
+        try {
+          const res = await fetch(`/api/categories/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || '保存失败');
+          }
+          document.getElementById('edit-dialog').close();
+          loadCategories();
+        } catch (err) {
+          editMsg.className = 'msg err';
+          editMsg.textContent = err.message;
+        }
+      });
 
       window.deleteCategory = function(id) {
         const c = categories.find(x => x.id === id);

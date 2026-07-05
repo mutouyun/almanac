@@ -17,6 +17,7 @@ import (
 	"log"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // validateRegex compiles a category regex to reject invalid patterns at save
@@ -41,10 +42,56 @@ type compiledRule struct {
 }
 
 // compiledRuleSet holds a user's rules split by direction, each pre-sorted by
-// match priority (level DESC, sort_order ASC, id ASC).
+// match priority (level DESC, sort_order ASC, id ASC). It also carries a byID
+// snapshot of the user's full category tree (all nodes, not just those with a
+// regex) so path derivation (餐饮>饮品>咖啡) can reuse the exact same cached
+// snapshot — same source, same invalidation, no N+1 queries.
 type compiledRuleSet struct {
 	expense []compiledRule // direction == -1
 	income  []compiledRule // direction == 1
+	byID    map[int64]catNode
+}
+
+// catNode is the minimal category info needed to walk a path up to the root.
+type catNode struct {
+	name     string
+	parentID *int64
+}
+
+// CategoryPath returns the full ">"-joined path for a category id using the
+// user's cached tree snapshot (e.g. "餐饮>饮品>咖啡"). Returns "" when the id is
+// unknown. A defensive depth cap (levels are <= 5 by schema) guards against
+// any accidental cycle.
+func (s *Store) CategoryPath(userID, categoryID int64) (string, error) {
+	set, err := s.rulesFor(userID)
+	if err != nil {
+		return "", err
+	}
+	return set.pathOf(categoryID), nil
+}
+
+// pathOf walks parent links from the given id up to the root, joining names
+// with ">". Empty string when the id is not in the snapshot.
+func (set *compiledRuleSet) pathOf(categoryID int64) string {
+	node, ok := set.byID[categoryID]
+	if !ok {
+		return ""
+	}
+	parts := []string{node.name}
+	cur := node.parentID
+	for i := 0; i < 8 && cur != nil; i++ {
+		p, ok := set.byID[*cur]
+		if !ok {
+			break
+		}
+		parts = append(parts, p.name)
+		cur = p.parentID
+	}
+	// parts is leaf->root; reverse to root->leaf.
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, ">")
 }
 
 // RouteEntry is the resilient wrapper used by the webhook ingestion path: it
@@ -126,8 +173,9 @@ func (s *Store) buildRuleSet(userID int64) (*compiledRuleSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load categories for routing: %w", err)
 	}
-	set := &compiledRuleSet{}
+	set := &compiledRuleSet{byID: make(map[int64]catNode, len(cats))}
 	for _, c := range cats {
+		set.byID[c.ID] = catNode{name: c.Name, parentID: c.ParentID}
 		if c.Regex == "" {
 			continue
 		}

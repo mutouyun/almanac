@@ -114,6 +114,7 @@ const title = '看板 · Almanac';
       .entry-time { font-size: 0.85rem; color: #888; white-space: nowrap; }
       .entry-desc { font-size: 0.95rem; }
       .entry-cat { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
+      .entry-path { font-size: 0.72rem; color: #6b7280; margin-top: 0.15rem; }
       .entry-cat-select {
         font-size: 0.75rem;
         color: #555;
@@ -372,10 +373,14 @@ const title = '看板 · Almanac';
             const amtText = isExpense ? `-¥${yuan}` : `+¥${yuan}`;
             const curId = e.category_id || 0;
             const unclassified = curId ? '' : ' unclassified';
+            const pathLine = e.category_path
+              ? `<div class="entry-path">${escapeHTML(e.category_path)}</div>`
+              : '';
             return `<div class="entry-row">
               <div class="entry-time">${e.record_time}</div>
               <div>
                 <div class="entry-desc">${escapeHTML(e.raw_type)}</div>
+                ${pathLine}
                 <select class="entry-cat-select${unclassified}" data-entry-id="${e.id}">${catOptions(isExpense, curId)}</select>
               </div>
               <div class="entry-amount ${amtClass}">${amtText}</div>
@@ -407,9 +412,8 @@ const title = '看板 · Almanac';
                 body: JSON.stringify(body),
               });
               if (!res.ok) throw new Error('failed');
-              // Toggle the unclassified styling to match the new state.
-              sel.classList.toggle('unclassified', !val);
-              sel.dataset.prev = val;
+              // Reload so the path line and styling reflect the new category.
+              loadEntries();
             } catch (e) {
               sel.value = prev; // revert on failure
               entriesError.textContent = '修改分类失败，请重试';

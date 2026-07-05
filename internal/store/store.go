@@ -653,6 +653,7 @@ type EntryRow struct {
 	Source       string  `json:"source"`
 	CategoryID   *int64  `json:"category_id"`
 	CategoryName string  `json:"category_name"`
+	CategoryPath string  `json:"category_path"`
 }
 
 // ListEntries returns a page of the user's ledger entries, newest first
@@ -697,6 +698,17 @@ LIMIT ? OFFSET ?`, userID, limit, offset)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("iterate entries: %w", err)
+	}
+
+	// Enrich classified rows with the full category path (餐饮>饮品>咖啡) reusing
+	// the per-user cached category-tree snapshot; O(depth<=5) per row, no extra
+	// DB round-trips. A snapshot error is non-fatal: paths just stay empty.
+	if set, err := s.rulesFor(userID); err == nil {
+		for i := range entries {
+			if entries[i].CategoryID != nil {
+				entries[i].CategoryPath = set.pathOf(*entries[i].CategoryID)
+			}
+		}
 	}
 	return entries, total, nil
 }

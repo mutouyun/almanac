@@ -242,6 +242,58 @@ func TestUpdateEntryCategory(t *testing.T) {
 	}
 }
 
+// TestCategoryPath: derive the full ">"-joined path and reflect renames after
+// cache invalidation.
+func TestCategoryPath(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
+	drink := mkcat(t, s, uid, &food, "饮品", -1, 0, "")
+	coffee := mkcat(t, s, uid, &drink, "咖啡", -1, 0, "")
+
+	if got, _ := s.CategoryPath(uid, coffee); got != "餐饮>饮品>咖啡" {
+		t.Fatalf("deep path: got %q, want 餐饮>饮品>咖啡", got)
+	}
+	if got, _ := s.CategoryPath(uid, food); got != "餐饮" {
+		t.Fatalf("root path: got %q, want 餐饮", got)
+	}
+	if got, _ := s.CategoryPath(uid, 99999); got != "" {
+		t.Fatalf("unknown id should be empty, got %q", got)
+	}
+
+	if err := s.UpdateCategory(uid, drink, "水饮", 0, ""); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if got, _ := s.CategoryPath(uid, coffee); got != "餐饮>水饮>咖啡" {
+		t.Fatalf("path after rename: got %q, want 餐饮>水饮>咖啡", got)
+	}
+}
+
+// TestListEntriesCategoryPath: ListEntries fills category_path for classified
+// entries and leaves it empty for unclassified ones.
+func TestListEntriesCategoryPath(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
+	coffee := mkcat(t, s, uid, &food, "咖啡", -1, 0, "")
+	classified := mkentry(t, s, uid, -1990, "latte")
+	if err := s.UpdateEntryCategory(uid, classified, &coffee); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	unclassified := mkentry(t, s, uid, -500, "mystery")
+
+	rows, _, err := s.ListEntries(uid, 200, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range rows {
+		if e.ID == classified && e.CategoryPath != "餐饮>咖啡" {
+			t.Fatalf("classified path: got %q, want 餐饮>咖啡", e.CategoryPath)
+		}
+		if e.ID == unclassified && e.CategoryPath != "" {
+			t.Fatalf("unclassified path should be empty, got %q", e.CategoryPath)
+		}
+	}
+}
+
 // TestUpdateEntryCategoryCrossUser: user B cannot touch user A's entry.
 func TestUpdateEntryCategoryCrossUser(t *testing.T) {
 	s, uidA := newTestStore(t)

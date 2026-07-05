@@ -8,7 +8,18 @@ const menuItems = [
 ];
 ---
 
-<aside class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20">
+<aside 
+  id="sidebar"
+  class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20 transition-transform duration-300 ease-in-out"
+>
+  <!-- Collapse Toggle Button (Floating) -->
+  <button 
+    id="sidebar-toggle" 
+    class="absolute -right-3 top-9 w-6 h-6 bg-white border border-slate-200 rounded-full flex items-center justify-center text-slate-400 hover:text-blue-600 shadow-sm z-30 transition-all"
+  >
+    <i id="toggle-icon" class="lucide-chevron-left w-4 h-4"></i>
+  </button>
+
   <div class="p-6">
     <div class="flex items-center gap-3 text-blue-600">
       <i class="lucide-book-open w-8 h-8"></i>
@@ -84,5 +95,51 @@ const menuItems = [
 
   // Support both normal load and Astro View Transitions
   initSidebar();
-  document.addEventListener('astro:after-swap', initSidebar);
+
+  function initToggle() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('sidebar-toggle');
+    const icon = document.getElementById('toggle-icon');
+    const main = document.querySelector('main');
+    
+    if (!sidebar || !toggle || !main) return;
+
+    let collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+
+    const updateUI = () => {
+      if (collapsed) {
+        sidebar.style.transform = 'translateX(-100%)';
+        main.style.marginLeft = '0';
+        icon.classList.replace('lucide-chevron-left', 'lucide-chevron-right');
+        toggle.style.right = '-40px'; // Pop out more when collapsed
+      } else {
+        sidebar.style.transform = 'translateX(0)';
+        main.style.marginLeft = '16rem'; // 64 * 0.25rem
+        icon.classList.replace('lucide-chevron-right', 'lucide-chevron-left');
+        toggle.style.right = '-12px'; // Default position
+      }
+    };
+
+    toggle.onclick = () => {
+      collapsed = !collapsed;
+      localStorage.setItem('sidebar-collapsed', collapsed);
+      updateUI();
+    };
+
+    // Apply initial state without transition for first load
+    sidebar.classList.remove('transition-transform');
+    main.classList.remove('transition-[margin]');
+    updateUI();
+    // Force reflow
+    sidebar.offsetHeight;
+    sidebar.classList.add('transition-transform');
+    main.classList.add('transition-[margin]');
+    main.classList.add('duration-300');
+  }
+
+  initToggle();
+  document.addEventListener('astro:after-swap', () => {
+    initSidebar();
+    initToggle();
+  });
 </script>

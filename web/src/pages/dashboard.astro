@@ -1,8 +1,6 @@
 ---
-// Almanac dashboard (placeholder).
-// Client-side guard: calls /api/whoami; if unauthorized, redirect to /login.
-// Ledger features will be filled in later iterations.
-const title = '看板 · Almanac';
+// Almanac Dashboard 2.0 - Visual Overhaul
+const title = '看板 2.0 · Almanac';
 ---
 
 <!doctype html>
@@ -11,448 +9,349 @@ const title = '看板 · Almanac';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.400.0/font/lucide.min.css" />
     <style>
-      :root { color-scheme: light dark; }
+      @font-face {
+        font-family: 'Geist';
+        src: url('https://cdn.jsdelivr.net/gh/vercel/geist-font@1.0.0/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
+      }
       body {
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        max-width: 48rem;
-        margin: 3rem auto;
-        padding: 0 1.5rem;
-        line-height: 1.6;
+        font-family: 'Geist', system-ui, -apple-system, sans-serif;
       }
-      header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        border-bottom: 1px solid #8883;
-        padding-bottom: 1rem;
+      [v-cloak] { display: none; }
+      .glass {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
       }
-      h1 { font-size: 1.6rem; margin: 0; }
-      .user { color: #888; font-size: 0.9rem; }
-      .admin-link {
+      .sidebar-item-active {
+        background: rgba(37, 99, 235, 0.1);
         color: #2563eb;
-        text-decoration: none;
-        font-size: 0.85rem;
-        margin-right: 0.6rem;
       }
-      .logout {
-        border: 1px solid #8884;
-        background: transparent;
-        border-radius: 8px;
-        padding: 0.35rem 0.8rem;
-        cursor: pointer;
-        color: inherit;
-        font-size: 0.85rem;
-      }
-      .card {
-        border: 1px solid #8883;
-        border-radius: 12px;
-        padding: 1.25rem 1.5rem;
-        margin-top: 2rem;
-      }
-      .muted { color: #888; }
-      #gate { color: #888; }
-      .pw-form { margin-top: 1rem; max-width: 20rem; }
-      .pw-form label { display: block; font-size: 0.85rem; margin: 0.6rem 0 0.3rem; }
-      .pw-form input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 0.55rem 0.7rem;
-        border: 1px solid #8884;
-        border-radius: 8px;
-        font-size: 0.95rem;
-        background: Field;
-        color: FieldText;
-      }
-      .pw-form button {
-        margin-top: 0.9rem;
-        padding: 0.55rem 1rem;
-        border: none;
-        border-radius: 8px;
-        background: #2563eb;
-        color: #fff;
-        cursor: pointer;
-      }
-      .pw-form button:disabled { opacity: 0.6; cursor: default; }
-      .pw-msg { font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
-      .pw-msg.ok { color: #16a34a; }
-      .pw-msg.err { color: #dc2626; }
-      .wh-row { margin-top: 0.9rem; }
-      .wh-label { font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; }
-      .wh-code {
-        font-family: ui-monospace, "Cascadia Code", monospace;
-        font-size: 0.85rem;
-        background: #8881;
-        border: 1px solid #8883;
-        border-radius: 8px;
-        padding: 0.5rem 0.7rem;
-        word-break: break-all;
-        user-select: all;
-      }
-      .wh-actions { margin-top: 0.9rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
-      .wh-actions button {
-        padding: 0.45rem 0.9rem;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 0.85rem;
-        border: 1px solid #8884;
-        background: transparent;
-        color: inherit;
-      }
-      .wh-actions .primary { border: none; background: #2563eb; color: #fff; }
-      .wh-msg { font-size: 0.8rem; min-height: 1.1em; margin-top: 0.5rem; color: #16a34a; }
-      .wh-msg.err { color: #dc2626; }
-      .entry-row {
-        border-top: 1px solid #8882;
-        padding: 0.8rem 0;
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        gap: 0.8rem;
-        align-items: baseline;
-      }
-      .entry-row:first-child { border-top: none; padding-top: 0; }
-      .entry-time { font-size: 0.85rem; color: #888; white-space: nowrap; }
-      .entry-desc { font-size: 0.95rem; }
-      .entry-cat { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
-      .entry-path { font-size: 0.72rem; color: #6b7280; margin-top: 0.15rem; }
-      .entry-cat-select {
-        font-size: 0.75rem;
-        color: #555;
-        margin-top: 0.2rem;
-        padding: 0.1rem 0.3rem;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background: #fff;
-        max-width: 12rem;
-      }
-      .entry-cat-select.unclassified {
-        color: #b45309;
-        border-color: #f59e0b;
-        background: #fffbeb;
-      }
-      .entry-cat-select:disabled { opacity: 0.5; }
-      .entry-amount { font-size: 0.95rem; font-weight: 600; white-space: nowrap; }
-      .entry-amount.expense { color: #dc2626; }
-      .entry-amount.income { color: #16a34a; }
-      #entries-list { margin-top: 1rem; }
-      .entries-total { font-size: 0.8rem; color: #888; margin-top: 0.8rem; }
-      .entries-empty { color: #888; margin-top: 1rem; }
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
     </style>
   </head>
-  <body>
-    <div id="gate">加载中…</div>
-    <div id="app" hidden>
-      <header>
-        <h1>📖 记账本</h1>
+  <body class="bg-slate-50 text-slate-900 min-h-screen flex">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20">
+      <div class="p-6">
+        <div class="flex items-center gap-3 text-blue-600">
+          <i class="lucide-book-open w-8 h-8"></i>
+          <span class="text-xl font-bold tracking-tight text-slate-800">Almanac</span>
+        </div>
+      </div>
+      
+      <nav class="flex-1 px-4 space-y-1">
+        <a href="/dashboard2" class="sidebar-item-active flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all">
+          <i class="lucide-layout-dashboard w-5 h-5"></i>
+          <span>概览看板</span>
+        </a>
+        <a href="/categories" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-50 font-medium transition-all">
+          <i class="lucide-tags w-5 h-5"></i>
+          <span>分类管理</span>
+        </a>
+        <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 cursor-not-allowed font-medium transition-all">
+          <i class="lucide-bar-chart-3 w-5 h-5"></i>
+          <span>统计报表</span>
+          <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 ml-auto">TBD</span>
+        </a>
+      </nav>
+
+      <div class="p-4 border-t border-slate-100">
+        <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50">
+          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm" id="user-avatar">
+            ?
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-semibold truncate" id="user-name">Loading...</p>
+            <p class="text-xs text-slate-400 truncate" id="user-role">...</p>
+          </div>
+          <button id="logout-btn" class="text-slate-400 hover:text-rose-500 transition-colors">
+            <i class="lucide-log-out w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 ml-64 p-8 max-w-5xl">
+      <!-- Header Area -->
+      <header class="flex justify-between items-end mb-8">
         <div>
-          <span class="user" id="user"></span>
-          <a class="admin-link" id="admin-link" href="/admin/users" hidden>账户管理</a>
-          <button class="logout" id="logout">退出</button>
+          <h1 class="text-3xl font-bold text-slate-800 tracking-tight">你好, <span id="greeting-name">...</span> 👋</h1>
+          <p class="text-slate-500 mt-1">今天又是理财充满动力的一天。</p>
+        </div>
+        <div class="flex gap-3">
+          <a id="admin-action" href="/admin/users" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-medium transition-all flex items-center gap-2">
+            <i class="lucide-users w-4 h-4"></i>
+            <span>账户管理</span>
+          </a>
+          <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
+            <i class="lucide-plus w-4 h-4"></i>
+            <span>手动记账</span>
+          </button>
         </div>
       </header>
 
-      <div class="card">
-        <strong>✅ 你已登录</strong>
-        <p class="muted">
-          这是看板占位页。接下来的迭代会在这里填入账目明细、分类树管理、
-          CSV 导入和汇总统计。
-        </p>
+      <!-- Grid Layout -->
+      <div class="grid grid-cols-3 gap-6 mb-8">
+        <!-- Quick Stats -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+              <i class="lucide-trending-up w-5 h-5"></i>
+            </div>
+            <span class="text-sm font-medium text-slate-500">本月收入</span>
+          </div>
+          <div class="text-2xl font-bold text-slate-800">¥ 0.00</div>
+          <div class="text-xs text-emerald-500 mt-2 font-medium">相比上月 +0%</div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="p-2 bg-rose-50 text-rose-600 rounded-lg">
+              <i class="lucide-trending-down w-5 h-5"></i>
+            </div>
+            <span class="text-sm font-medium text-slate-500">本月支出</span>
+          </div>
+          <div class="text-2xl font-bold text-slate-800">¥ 0.00</div>
+          <div class="text-xs text-rose-400 mt-2 font-medium">预算剩余 100%</div>
+        </div>
+
+        <div class="bg-blue-600 p-6 rounded-2xl shadow-lg shadow-blue-100 text-white">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="p-2 bg-blue-500 text-white rounded-lg">
+              <i class="lucide-wallet w-5 h-5"></i>
+            </div>
+            <span class="text-sm font-medium opacity-80">当前结余</span>
+          </div>
+          <div class="text-2xl font-bold">¥ 0.00</div>
+          <div class="text-xs opacity-70 mt-2">实时数据汇总</div>
+        </div>
       </div>
 
-      <div class="card">
-        <strong>🔌 Webhook 接入</strong>
-        <p class="muted">iOS 快捷指令把账单 POST 到下方接口，请求头带上 token。Body 三要素：<code>date</code>（带时区 ISO 8601）、<code>type</code>（描述）、<code>amount</code>（支出为负、收入为正）。</p>
-        <div class="wh-row">
-          <div class="wh-label">接口地址（POST）</div>
-          <div class="wh-code" id="wh-url">…</div>
-        </div>
-        <div class="wh-row">
-          <div class="wh-label">请求头</div>
-          <div class="wh-code" id="wh-header">…</div>
-        </div>
-        <div class="wh-actions">
-          <button class="primary" id="wh-copy">复制 token</button>
-          <button id="wh-reset">重置 token</button>
-        </div>
-        <p class="wh-msg" id="wh-msg"></p>
-      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Main List -->
+        <div class="lg:col-span-2 space-y-6">
+          <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+              <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i class="lucide-list text-blue-500 w-5 h-5"></i>
+                账目明细
+              </h3>
+              <a href="/categories" class="text-xs text-blue-600 hover:underline">管理分类</a>
+            </div>
+            
+            <div id="entries-loading" class="p-12 text-center text-slate-400">
+              <div class="animate-pulse flex flex-col items-center">
+                <div class="h-8 w-8 bg-slate-100 rounded-full mb-3"></div>
+                <div class="h-2 w-24 bg-slate-100 rounded"></div>
+              </div>
+            </div>
 
-      <div class="card">
-        <strong>🔑 修改密码</strong>
-        <form class="pw-form" id="pw-form">
-          <label for="old">当前密码</label>
-          <input id="old" type="password" autocomplete="current-password" required />
-          <label for="new1">新密码（至少 6 位）</label>
-          <input id="new1" type="password" autocomplete="new-password" required />
-          <label for="new2">确认新密码</label>
-          <input id="new2" type="password" autocomplete="new-password" required />
-          <button type="submit" id="pw-submit">修改密码</button>
-          <p class="pw-msg" id="pw-msg"></p>
-        </form>
-      </div>
+            <div id="entries-list" class="divide-y divide-slate-50" hidden>
+              <!-- Rows injected by JS -->
+            </div>
+            
+            <div class="px-6 py-3 bg-slate-50 border-t border-slate-100">
+                <p id="entries-total" class="text-xs text-slate-400 font-medium"></p>
+            </div>
+          </section>
+        </div>
 
-      <div class="card">
-        <strong>📊 账目明细</strong>
-        <p class="muted">最近的账目记录（倒序，待分类的显示为“未分类”）。<a href="/categories" style="color:#2563eb;text-decoration:none;">管理分类 →</a></p>
-        <div id="entries-loading" class="muted" style="margin-top:1rem;">加载中…</div>
-        <div id="entries-list" hidden></div>
-        <div id="entries-error" class="pw-msg err" hidden></div>
+        <!-- Widgets Sidebar -->
+        <div class="space-y-6">
+          <!-- Webhook Settings Widget -->
+          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <i class="lucide-zap text-amber-500 w-5 h-5"></i>
+              自动化同步
+            </h3>
+            <div class="space-y-4">
+              <div>
+                <label class="text-[10px] uppercase tracking-wider font-bold text-slate-400 mb-1 block">接口地址</label>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[11px] font-mono break-all text-slate-600" id="wh-url">
+                  ...
+                </div>
+              </div>
+              <button id="wh-copy" class="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium rounded-xl transition-all">
+                复制 Token
+              </button>
+              <p id="wh-msg" class="text-center text-[11px] min-h-[1em]"></p>
+            </div>
+          </section>
+
+          <!-- Password Widget (Collapsible) -->
+          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group">
+            <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('pw-form-container').classList.toggle('hidden')">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="lucide-key text-slate-400 w-5 h-5"></i>
+                    安全设置
+                </h3>
+                <i class="lucide-chevron-down w-4 h-4 text-slate-300"></i>
+            </div>
+            <div id="pw-form-container" class="mt-4 space-y-3 hidden">
+                <input id="old" type="password" placeholder="当前密码" class="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:border-blue-300 transition-all" />
+                <input id="new1" type="password" placeholder="新密码" class="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:border-blue-300 transition-all" />
+                <button id="pw-submit" class="w-full py-2 bg-blue-50 text-blue-600 text-sm font-bold rounded-xl hover:bg-blue-100 transition-all">确认更新</button>
+                <p id="pw-msg" class="text-center text-[11px]"></p>
+            </div>
+          </section>
+        </div>
       </div>
-    </div>
+    </main>
 
     <script>
-      const gate = document.getElementById('gate');
-      const app = document.getElementById('app');
+      // Shared logic (Copied & adapted from dashboard.astro)
+      const userAvatar = document.getElementById('user-avatar');
+      const userName = document.getElementById('user-name');
+      const userRole = document.getElementById('user-role');
+      const greetingName = document.getElementById('greeting-name');
+      const adminAction = document.getElementById('admin-action');
 
       fetch('/api/whoami')
-        .then((r) => {
-          if (!r.ok) throw new Error('unauthorized');
+        .then(r => {
+          if (!r.ok) throw new Error();
           return r.json();
         })
-        .then((d) => {
-          document.getElementById('user').textContent = `${d.username} ·`;
-          if (d.is_admin) document.getElementById('admin-link').hidden = false;
-          gate.hidden = true;
-          app.hidden = false;
+        .then(d => {
+          userName.textContent = d.username;
+          greetingName.textContent = d.username;
+          userRole.textContent = d.is_admin ? '超级管理员' : '普通用户';
+          userAvatar.textContent = d.username[0].toUpperCase();
+          if (d.is_admin) adminAction.classList.remove('hidden');
           loadWebhookToken();
           loadCategories().then(loadEntries);
         })
-        .catch(() => {
-          window.location.href = '/login';
-        });
+        .catch(() => window.location.href = '/login');
 
-      document.getElementById('logout').addEventListener('click', async () => {
-        await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+      document.getElementById('logout-btn').onclick = async () => {
+        await fetch('/api/logout', { method: 'POST' });
         window.location.href = '/login';
-      });
+      };
 
+      // Webhook Logic
       const whUrl = document.getElementById('wh-url');
-      const whHeader = document.getElementById('wh-header');
       const whMsg = document.getElementById('wh-msg');
       let currentToken = '';
-
-      function renderToken(data) {
-        currentToken = data.token;
-        whUrl.textContent = `${window.location.origin}${data.path}`;
-        whHeader.textContent = `X-Webhook-Token: ${data.token}`;
-      }
 
       async function loadWebhookToken() {
         try {
           const res = await fetch('/api/webhook-token');
-          if (!res.ok) throw new Error('failed');
-          renderToken(await res.json());
+          const data = await res.json();
+          currentToken = data.token;
+          whUrl.textContent = data.token;
         } catch (e) {
-          whMsg.className = 'wh-msg err';
-          whMsg.textContent = '无法获取 token';
+          whMsg.textContent = '❌ 加载失败';
         }
       }
 
-      document.getElementById('wh-copy').addEventListener('click', async () => {
-        whMsg.className = 'wh-msg';
+      document.getElementById('wh-copy').onclick = async () => {
         try {
           await navigator.clipboard.writeText(currentToken);
-          whMsg.textContent = '✅ token 已复制到剪贴板';
-        } catch (e) {
-          whMsg.className = 'wh-msg err';
-          whMsg.textContent = '复制失败，请长按上方 token 手动复制';
-        }
-      });
+          whMsg.className = 'text-center text-[11px] text-emerald-500';
+          whMsg.textContent = '✅ 已成功复制 Token';
+          setTimeout(() => whMsg.textContent = '', 2000);
+        } catch (e) {}
+      };
 
-      document.getElementById('wh-reset').addEventListener('click', async () => {
-        if (!confirm('重置后旧 token 立即失效，iOS 快捷指令需同步更新。确定？')) return;
-        whMsg.className = 'wh-msg';
-        whMsg.textContent = '重置中…';
-        try {
-          const res = await fetch('/api/webhook-token/reset', { method: 'POST' });
-          if (!res.ok) throw new Error('failed');
-          renderToken(await res.json());
-          whMsg.textContent = '✅ token 已重置，请更新快捷指令';
-        } catch (e) {
-          whMsg.className = 'wh-msg err';
-          whMsg.textContent = '重置失败，请重试';
-        }
-      });
-
-      const pwForm = document.getElementById('pw-form');
-      const pwBtn = document.getElementById('pw-submit');
-      const pwMsg = document.getElementById('pw-msg');
-      pwForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        pwMsg.className = 'pw-msg';
-        pwMsg.textContent = '';
-        const old = document.getElementById('old').value;
-        const n1 = document.getElementById('new1').value;
-        const n2 = document.getElementById('new2').value;
-        if (n1 !== n2) {
-          pwMsg.className = 'pw-msg err';
-          pwMsg.textContent = '两次输入的新密码不一致';
-          return;
-        }
-        if (n1.length < 6) {
-          pwMsg.className = 'pw-msg err';
-          pwMsg.textContent = '新密码至少 6 位';
-          return;
-        }
-        pwBtn.disabled = true;
-        pwBtn.textContent = '提交中…';
-        try {
-          const res = await fetch('/api/change-password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ old_password: old, new_password: n1 }),
-          });
-          if (res.ok) {
-            pwMsg.className = 'pw-msg ok';
-            pwMsg.textContent = '修改成功，即将跳转登录页…';
-            setTimeout(() => { window.location.href = '/login'; }, 1500);
-            return;
-          }
-          const data = await res.json().catch(() => ({}));
-          pwMsg.className = 'pw-msg err';
-          pwMsg.textContent =
-            data.error === 'wrong old password' ? '当前密码错误'
-            : data.error === 'password too short' ? '新密码至少 6 位'
-            : '修改失败，请重试';
-        } catch (e) {
-          pwMsg.className = 'pw-msg err';
-          pwMsg.textContent = '无法连接服务器';
-        } finally {
-          pwBtn.disabled = false;
-          pwBtn.textContent = '修改密码';
-        }
-      });
-
-      // Load entries list
-      const entriesLoading = document.getElementById('entries-loading');
-      const entriesList = document.getElementById('entries-list');
-      const entriesError = document.getElementById('entries-error');
-
-      // Categories cached for the reclassify dropdowns, split by direction.
+      // Entry Logic
       let catsExpense = [];
       let catsIncome = [];
 
       async function loadCategories() {
-        try {
-          const res = await fetch('/api/categories');
-          if (!res.ok) return;
-          const data = await res.json();
-          const cats = data.categories || [];
-          catsExpense = treeOrder(cats.filter(c => c.direction === -1));
-          catsIncome = treeOrder(cats.filter(c => c.direction === 1));
-        } catch (e) { /* dropdowns just stay empty on failure */ }
-      }
-
-      // Reorder a flat category list into depth-first order so children sit
-      // directly under their parent. Input is already sorted by level, then
-      // sort_order, then id, so per-parent child order is preserved.
-      function treeOrder(list) {
-        const childrenOf = new Map();
-        for (const c of list) {
-          const key = c.parent_id == null ? 0 : c.parent_id;
-          if (!childrenOf.has(key)) childrenOf.set(key, []);
-          childrenOf.get(key).push(c);
-        }
-        const ordered = [];
-        const walk = (parentKey) => {
-          for (const c of childrenOf.get(parentKey) || []) {
-            ordered.push(c);
-            walk(c.id);
+        const res = await fetch('/api/categories');
+        const data = await res.json();
+        const cats = data.categories || [];
+        const treeOrder = (list) => {
+          const childrenOf = new Map();
+          for (const c of list) {
+            const key = c.parent_id == null ? 0 : c.parent_id;
+            if (!childrenOf.has(key)) childrenOf.set(key, []);
+            childrenOf.get(key).push(c);
           }
+          const ordered = [];
+          const walk = (p) => { (childrenOf.get(p) || []).forEach(c => { ordered.push(c); walk(c.id); }); };
+          walk(0); return ordered;
         };
-        walk(0);
-        return ordered;
+        catsExpense = treeOrder(cats.filter(c => c.direction === -1));
+        catsIncome = treeOrder(cats.filter(c => c.direction === 1));
       }
 
-      // Build the <option> list for an entry given its direction and current id.
-      // Non-root categories are indented by level to show the hierarchy.
       function catOptions(isExpense, currentId) {
         const list = isExpense ? catsExpense : catsIncome;
-        let opts = `<option value=""${!currentId ? ' selected' : ''}>未分类</option>`;
-        for (const c of list) {
-          const sel = c.id === currentId ? ' selected' : '';
+        let opts = `<option value="" ${!currentId ? 'selected' : ''}>未分类</option>`;
+        list.forEach(c => {
+          const sel = c.id === currentId ? 'selected' : '';
           const indent = c.level > 1 ? '\u3000'.repeat(c.level - 1) + '└ ' : '';
-          opts += `<option value="${c.id}"${sel}>${indent}${escapeHTML(c.name)}</option>`;
-        }
+          opts += `<option value="${c.id}" ${sel}>${indent}${c.name}</option>`;
+        });
         return opts;
       }
 
       async function loadEntries() {
+        const list = document.getElementById('entries-list');
+        const loading = document.getElementById('entries-loading');
         try {
           const res = await fetch('/api/entries?limit=20');
-          if (!res.ok) throw new Error('failed');
           const data = await res.json();
-          entriesLoading.hidden = true;
-          if (data.entries.length === 0) {
-            entriesList.innerHTML = '<div class="entries-empty">还没有账目记录</div>';
-            entriesList.hidden = false;
-            return;
-          }
-          entriesList.innerHTML = data.entries.map(e => {
-            const cents = e.amount_cents;
-            const isExpense = cents < 0;
-            const yuan = (Math.abs(cents) / 100).toFixed(2);
-            const amtClass = isExpense ? 'expense' : 'income';
-            const amtText = isExpense ? `-¥${yuan}` : `+¥${yuan}`;
-            const curId = e.category_id || 0;
-            const unclassified = curId ? '' : ' unclassified';
-            const pathLine = e.category_path
-              ? `<div class="entry-path">${escapeHTML(e.category_path)}</div>`
-              : '';
-            return `<div class="entry-row">
-              <div class="entry-time">${e.record_time}</div>
-              <div>
-                <div class="entry-desc">${escapeHTML(e.raw_type)}</div>
-                ${pathLine}
-                <select class="entry-cat-select${unclassified}" data-entry-id="${e.id}">${catOptions(isExpense, curId)}</select>
+          loading.hidden = true;
+          list.hidden = false;
+          
+          list.innerHTML = data.entries.map(e => {
+            const isExpense = e.amount_cents < 0;
+            const yuan = (Math.abs(e.amount_cents) / 100).toFixed(2);
+            const amtColor = isExpense ? 'text-rose-500' : 'text-emerald-500';
+            const bgClass = !e.category_id ? 'bg-amber-50/30' : 'hover:bg-slate-50';
+            
+            return `
+              <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bgClass}">
+                <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400">
+                  <i class="lucide-${isExpense ? 'arrow-up-right' : 'arrow-down-left'} w-5 h-5"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-slate-700 truncate">${e.raw_type}</span>
+                    ${!e.category_id ? '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[10px] font-bold rounded">待分类</span>' : ''}
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                    <span>${e.record_time}</span>
+                    ${e.category_path ? `<span class="opacity-50">/</span><span>${e.category_path}</span>` : ''}
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="font-bold ${amtColor}">${isExpense ? '-' : '+'}¥${yuan}</div>
+                  <select class="entry-cat-select bg-transparent text-[11px] text-slate-400 outline-none mt-1 text-right" data-entry-id="${e.id}">
+                    ${catOptions(isExpense, e.category_id)}
+                  </select>
+                </div>
               </div>
-              <div class="entry-amount ${amtClass}">${amtText}</div>
-            </div>`;
+            `;
           }).join('');
-          entriesList.innerHTML += `<div class="entries-total">共 ${data.total} 条记录</div>`;
-          entriesList.hidden = false;
+          
+          document.getElementById('entries-total').textContent = `显示最近 ${data.entries.length} 条记录 (总计 ${data.total})`;
           bindCategorySelects();
         } catch (e) {
-          entriesLoading.hidden = true;
-          entriesError.textContent = '加载失败，请刷新重试';
-          entriesError.hidden = false;
+          loading.textContent = '❌ 加载失败';
         }
       }
 
-      // Wire each dropdown to PATCH the entry's category on change.
       function bindCategorySelects() {
-        for (const sel of entriesList.querySelectorAll('.entry-cat-select')) {
-          sel.addEventListener('change', async () => {
-            const id = sel.dataset.entryId;
-            const val = sel.value;
-            const body = { category_id: val ? Number(val) : null };
-            const prev = sel.dataset.prev || '';
+        document.querySelectorAll('.entry-cat-select').forEach(sel => {
+          sel.onchange = async () => {
             sel.disabled = true;
-            try {
-              const res = await fetch(`/api/entries/${id}/category`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-              });
-              if (!res.ok) throw new Error('failed');
-              // Reload so the path line and styling reflect the new category.
-              loadEntries();
-            } catch (e) {
-              sel.value = prev; // revert on failure
-              entriesError.textContent = '修改分类失败，请重试';
-              entriesError.hidden = false;
-            } finally {
-              sel.disabled = false;
-            }
-          });
-          sel.dataset.prev = sel.value;
-        }
-      }
-
-      function escapeHTML(s) {
-        const div = document.createElement('div');
-        div.textContent = s;
-        return div.innerHTML;
+            await fetch(`/api/entries/${sel.dataset.entryId}/category`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ category_id: sel.value ? Number(sel.value) : null }),
+            });
+            loadEntries();
+          };
+        });
       }
     </script>
   </body>

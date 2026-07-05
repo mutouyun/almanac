@@ -283,6 +283,7 @@ func main() {
 	mux.Handle("/api/logout", logoutHandler(st))
 	mux.Handle("/api/whoami", whoamiHandler(st))
 	mux.Handle("/api/change-password", changePasswordHandler(st))
+	mux.Handle("/api/webhook/entry", webhookHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

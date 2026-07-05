@@ -93,7 +93,76 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
-);`
+);
+
+CREATE TABLE IF NOT EXISTS ledgers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL DEFAULT '默认账本',
+    is_default INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_default_ledger ON ledgers(user_id) WHERE is_default = 1;
+
+CREATE TABLE IF NOT EXISTS categories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parent_id  INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
+    name       TEXT NOT NULL,
+    direction  INTEGER NOT NULL CHECK(direction IN (-1, 1)),
+    level      INTEGER NOT NULL CHECK(level BETWEEN 1 AND 5),
+    regex      TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cat_user_parent ON categories(user_id, parent_id);
+CREATE INDEX IF NOT EXISTS idx_cat_user_sort ON categories(user_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ledger_id   INTEGER NOT NULL REFERENCES ledgers(id) ON DELETE CASCADE,
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    amount_cents INTEGER NOT NULL CHECK(amount_cents != 0),
+    raw_type    TEXT NOT NULL,
+    record_time TEXT NOT NULL,
+    note        TEXT,
+    source      TEXT NOT NULL DEFAULT 'webhook' CHECK(source IN ('webhook','manual','csv')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_entry_user_time ON ledger_entries(user_id, record_time);
+CREATE INDEX IF NOT EXISTS idx_entry_user_cat ON ledger_entries(user_id, category_id);
+
+CREATE TRIGGER IF NOT EXISTS trg_cat_dir_ins BEFORE INSERT ON categories
+WHEN NEW.parent_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT user_id FROM categories WHERE id = NEW.parent_id) <> NEW.user_id
+            THEN RAISE(ABORT, 'parent category must belong to the same user')
+        WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
+            THEN RAISE(ABORT, 'direction must inherit from parent')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cat_dir_upd BEFORE UPDATE ON categories
+WHEN NEW.parent_id IS NOT NULL
+BEGIN
+    SELECT CASE
+        WHEN (SELECT user_id FROM categories WHERE id = NEW.parent_id) <> NEW.user_id
+            THEN RAISE(ABORT, 'parent category must belong to the same user')
+        WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
+            THEN RAISE(ABORT, 'direction must inherit from parent')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cat_dir_immutable BEFORE UPDATE OF direction ON categories
+WHEN OLD.direction <> NEW.direction
+BEGIN
+    SELECT RAISE(ABORT, 'direction is immutable');
+END;`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -131,11 +200,24 @@ func (s *Store) seedAdmin() error {
 	if err != nil {
 		return fmt.Errorf("generate webhook token: %w", err)
 	}
-	if _, err := s.db.Exec(
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(
 		"INSERT INTO users (username, password_hash, webhook_token, created_at) VALUES (?, ?, ?, ?)",
-		defaultUser, string(hash), token, time.Now().Format(time.RFC3339),
-	); err != nil {
+		defaultUser, string(hash), token, now,
+	)
+	if err != nil {
 		return fmt.Errorf("seed admin: %w", err)
+	}
+	userID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("get admin id: %w", err)
+	}
+	// Every user starts with one default ledger.
+	if _, err := s.db.Exec(
+		"INSERT INTO ledgers (user_id, name, is_default, created_at, updated_at) VALUES (?, '默认账本', 1, ?, ?)",
+		userID, now, now,
+	); err != nil {
+		return fmt.Errorf("seed default ledger: %w", err)
 	}
 	log.Printf("WARNING: seeded default admin account username=%q password=%q -- CHANGE THIS PASSWORD ASAP", defaultUser, defaultPass)
 	return nil
@@ -265,6 +347,76 @@ func (s *Store) DeleteUserSessions(userID int64) error {
 		return fmt.Errorf("delete user sessions: %w", err)
 	}
 	return nil
+}
+
+// UserByWebhookToken looks up a user by their webhook token.
+func (s *Store) UserByWebhookToken(token string) (*User, error) {
+	var u User
+	err := s.db.QueryRow(
+		"SELECT id, username, password_hash, webhook_token, created_at FROM users WHERE webhook_token = ?",
+		token,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query user by token: %w", err)
+	}
+	return &u, nil
+}
+
+// DefaultLedgerID returns the id of the user's default ledger.
+func (s *Store) DefaultLedgerID(userID int64) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(
+		"SELECT id FROM ledgers WHERE user_id = ? AND is_default = 1",
+		userID,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("no default ledger for user %d", userID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("query default ledger: %w", err)
+	}
+	return id, nil
+}
+
+// Entry represents one ledger record for insertion.
+type Entry struct {
+	UserID     int64
+	LedgerID   int64
+	CategoryID *int64 // nil = unclassified
+	AmountCents int64
+	RawType    string
+	RecordTime string // "YYYY-MM-DD HH:mm"
+	Note       string
+	Source     string // webhook / manual / csv
+}
+
+// InsertEntry inserts one ledger entry and returns its new id.
+func (s *Store) InsertEntry(e Entry) (int64, error) {
+	now := time.Now().Format(time.RFC3339)
+	var categoryID any
+	if e.CategoryID != nil {
+		categoryID = *e.CategoryID
+	}
+	var note any
+	if e.Note != "" {
+		note = e.Note
+	}
+	res, err := s.db.Exec(`
+INSERT INTO ledger_entries
+    (user_id, ledger_id, category_id, amount_cents, raw_type, record_time, note, source, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.UserID, e.LedgerID, categoryID, e.AmountCents, e.RawType, e.RecordTime, note, e.Source, now, now)
+	if err != nil {
+		return 0, fmt.Errorf("insert entry: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("get entry id: %w", err)
+	}
+	return id, nil
 }
 
 // Close closes the underlying database.

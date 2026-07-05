@@ -1,0 +1,113 @@
+---
+// Almanac login page.
+// Posts credentials to /api/login; on success the backend sets an HttpOnly
+// session cookie and we redirect to the dashboard.
+const title = '登录 · Almanac';
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        min-height: 100vh;
+        margin: 0;
+        align-items: center;
+        justify-content: center;
+        background: #f6f7f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #16181d; }
+      }
+      .card {
+        width: 20rem;
+        border: 1px solid #8883;
+        border-radius: 14px;
+        padding: 2rem;
+        background: color-mix(in srgb, Canvas 92%, transparent);
+        box-shadow: 0 8px 30px #0002;
+      }
+      h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+      .subtitle { color: #888; margin: 0 0 1.5rem; font-size: 0.9rem; }
+      label { display: block; font-size: 0.85rem; margin-bottom: 0.35rem; }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.6rem 0.7rem;
+        margin-bottom: 1rem;
+        border: 1px solid #8884;
+        border-radius: 8px;
+        font-size: 1rem;
+        background: Field;
+        color: FieldText;
+      }
+      button {
+        width: 100%;
+        padding: 0.65rem;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.6; cursor: default; }
+      .err { color: #dc2626; font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <form class="card" id="login-form">
+      <h1>📖 Almanac</h1>
+      <p class="subtitle">登录以进入账本</p>
+
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" required />
+
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+      <button type="submit" id="submit">登录</button>
+      <p class="err" id="err"></p>
+    </form>
+
+    <script>
+      const form = document.getElementById('login-form');
+      const btn = document.getElementById('submit');
+      const err = document.getElementById('err');
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        err.textContent = '';
+        btn.disabled = true;
+        btn.textContent = '登录中…';
+        try {
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: document.getElementById('username').value,
+              password: document.getElementById('password').value,
+            }),
+          });
+          if (res.ok) {
+            window.location.href = '/dashboard';
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          err.textContent = data.error === 'invalid credentials' ? '用户名或密码错误' : '登录失败，请重试';
+        } catch (e) {
+          err.textContent = '无法连接服务器';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '登录';
+        }
+      });
+    </script>
+  </body>
+</html>

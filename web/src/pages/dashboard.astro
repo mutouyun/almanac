@@ -29,6 +29,12 @@ const title = '看板 · Almanac';
       }
       h1 { font-size: 1.6rem; margin: 0; }
       .user { color: #888; font-size: 0.9rem; }
+      .admin-link {
+        color: #2563eb;
+        text-decoration: none;
+        font-size: 0.85rem;
+        margin-right: 0.6rem;
+      }
       .logout {
         border: 1px solid #8884;
         background: transparent;
@@ -123,6 +129,7 @@ const title = '看板 · Almanac';
         <h1>📖 记账本</h1>
         <div>
           <span class="user" id="user"></span>
+          <a class="admin-link" id="admin-link" href="/admin/users" hidden>账户管理</a>
           <button class="logout" id="logout">退出</button>
         </div>
       </header>
@@ -187,6 +194,7 @@ const title = '看板 · Almanac';
         })
         .then((d) => {
           document.getElementById('user').textContent = `${d.username} ·`;
+          if (d.is_admin) document.getElementById('admin-link').hidden = false;
           gate.hidden = true;
           app.hidden = false;
           loadWebhookToken();

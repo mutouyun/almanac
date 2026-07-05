@@ -37,6 +37,12 @@ var ErrCategoryNotFound = errors.New("category not found")
 // ErrMaxDepth is returned when creating a category would exceed level 5.
 var ErrMaxDepth = errors.New("category depth exceeds 5 levels")
 
+// ErrUsernameTaken is returned when creating a user whose username already exists.
+var ErrUsernameTaken = errors.New("username already taken")
+
+// ErrCannotDeleteAdmin is returned when attempting to delete an admin account.
+var ErrCannotDeleteAdmin = errors.New("cannot delete an administrator account")
+
 // User represents an application account. In the MVP every logged-in user is
 // effectively an administrator of their own ledger.
 type User struct {
@@ -44,6 +50,7 @@ type User struct {
 	Username     string
 	PasswordHash string
 	WebhookToken string
+	IsAdmin      bool
 	CreatedAt    string
 }
 
@@ -99,6 +106,7 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     webhook_token TEXT NOT NULL UNIQUE,
+    is_admin      INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL
 );
 
@@ -180,6 +188,46 @@ END;`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := s.migrateIsAdmin(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateIsAdmin adds the users.is_admin column on databases created before
+// the account-management feature existed, then flags the legacy 'admin'
+// account as the administrator. Idempotent: a no-op once the column is present.
+func (s *Store) migrateIsAdmin() error {
+	rows, err := s.db.Query("PRAGMA table_info(users)")
+	if err != nil {
+		return fmt.Errorf("inspect users columns: %w", err)
+	}
+	defer rows.Close()
+	hasCol := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan column info: %w", err)
+		}
+		if name == "is_admin" {
+			hasCol = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate column info: %w", err)
+	}
+	if hasCol {
+		return nil
+	}
+	if _, err := s.db.Exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("add is_admin column: %w", err)
+	}
+	if _, err := s.db.Exec("UPDATE users SET is_admin = 1 WHERE username = 'admin'"); err != nil {
+		return fmt.Errorf("flag admin user: %w", err)
+	}
 	return nil
 }
 
@@ -216,7 +264,7 @@ func (s *Store) seedAdmin() error {
 	}
 	now := time.Now().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		"INSERT INTO users (username, password_hash, webhook_token, created_at) VALUES (?, ?, ?, ?)",
+		"INSERT INTO users (username, password_hash, webhook_token, is_admin, created_at) VALUES (?, ?, ?, 1, ?)",
 		defaultUser, string(hash), token, now,
 	)
 	if err != nil {
@@ -288,9 +336,9 @@ WHERE NOT EXISTS (SELECT 1 FROM ledgers l WHERE l.user_id = u.id AND l.is_defaul
 func (s *Store) UserByUsername(username string) (*User, error) {
 	var u User
 	err := s.db.QueryRow(
-		"SELECT id, username, password_hash, webhook_token, created_at FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, webhook_token, is_admin, created_at FROM users WHERE username = ?",
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.IsAdmin, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
@@ -338,10 +386,10 @@ func (s *Store) UserBySession(token string) (*User, error) {
 		expiresAt string
 	)
 	err := s.db.QueryRow(`
-SELECT u.id, u.username, u.password_hash, u.webhook_token, u.created_at, s.expires_at
+SELECT u.id, u.username, u.password_hash, u.webhook_token, u.is_admin, u.created_at, s.expires_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token = ?`, token).Scan(
-		&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.CreatedAt, &expiresAt)
+		&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.IsAdmin, &u.CreatedAt, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
@@ -402,9 +450,9 @@ func (s *Store) DeleteUserSessions(userID int64) error {
 func (s *Store) UserByWebhookToken(token string) (*User, error) {
 	var u User
 	err := s.db.QueryRow(
-		"SELECT id, username, password_hash, webhook_token, created_at FROM users WHERE webhook_token = ?",
+		"SELECT id, username, password_hash, webhook_token, is_admin, created_at FROM users WHERE webhook_token = ?",
 		token,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.WebhookToken, &u.IsAdmin, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrUserNotFound
 	}
@@ -412,6 +460,112 @@ func (s *Store) UserByWebhookToken(token string) (*User, error) {
 		return nil, fmt.Errorf("query user by token: %w", err)
 	}
 	return &u, nil
+}
+
+// UserInfo is a user summary for the admin account-management list (no secrets).
+type UserInfo struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	IsAdmin   bool   `json:"is_admin"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListUsers returns all accounts (admin-only view), oldest first.
+func (s *Store) ListUsers() ([]UserInfo, error) {
+	rows, err := s.db.Query("SELECT id, username, is_admin, created_at FROM users ORDER BY id ASC")
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+	users := make([]UserInfo, 0, 8)
+	for rows.Next() {
+		var u UserInfo
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate users: %w", err)
+	}
+	return users, nil
+}
+
+// CreateUser provisions a new non-admin account: bcrypt-hashed password, a
+// random webhook token, and a default ledger. Returns ErrUsernameTaken if the
+// username collides.
+func (s *Store) CreateUser(username, password string) (int64, error) {
+	if _, err := s.UserByUsername(username); err == nil {
+		return 0, ErrUsernameTaken
+	} else if !errors.Is(err, ErrUserNotFound) {
+		return 0, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, fmt.Errorf("hash password: %w", err)
+	}
+	token, err := randomToken(24)
+	if err != nil {
+		return 0, fmt.Errorf("generate webhook token: %w", err)
+	}
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(
+		"INSERT INTO users (username, password_hash, webhook_token, is_admin, created_at) VALUES (?, ?, ?, 0, ?)",
+		username, string(hash), token, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert user: %w", err)
+	}
+	userID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("get user id: %w", err)
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO ledgers (user_id, name, is_default, created_at, updated_at) VALUES (?, '\u9ed8\u8ba4\u8d26\u672c', 1, ?, ?)",
+		userID, now, now,
+	); err != nil {
+		return 0, fmt.Errorf("seed default ledger: %w", err)
+	}
+	return userID, nil
+}
+
+// DeleteUser removes an account and all its data (ON DELETE CASCADE). It
+// refuses to delete any administrator account (guards against self-deletion
+// and losing the last admin), returning ErrCannotDeleteAdmin.
+func (s *Store) DeleteUser(id int64) error {
+	var isAdmin bool
+	err := s.db.QueryRow("SELECT is_admin FROM users WHERE id = ?", id).Scan(&isAdmin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup user: %w", err)
+	}
+	if isAdmin {
+		return ErrCannotDeleteAdmin
+	}
+	if _, err := s.db.Exec("DELETE FROM users WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	return nil
+}
+
+// AdminResetPassword sets a new password for any user (no old-password check)
+// and revokes all of that user's active sessions, forcing re-login.
+func (s *Store) AdminResetPassword(id int64, newPassword string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	res, err := s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(hash), id)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrUserNotFound
+	}
+	return s.DeleteUserSessions(id)
 }
 
 // DefaultLedgerID returns the id of the user's default ledger.

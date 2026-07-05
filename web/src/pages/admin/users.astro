@@ -1,0 +1,247 @@
+---
+// Almanac account management page (admin only).
+// Client-side guard: /api/whoami must return is_admin=true, else redirect.
+const title = '账户管理 · Almanac';
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        max-width: 48rem;
+        margin: 3rem auto;
+        padding: 0 1.5rem;
+        line-height: 1.6;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        border-bottom: 1px solid #8883;
+        padding-bottom: 1rem;
+      }
+      h1 { font-size: 1.6rem; margin: 0; }
+      a { color: #2563eb; text-decoration: none; }
+      .card {
+        border: 1px solid #8883;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-top: 2rem;
+      }
+      .muted { color: #888; }
+      #gate { color: #888; }
+      .user-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.7rem 0;
+        border-top: 1px solid #8882;
+      }
+      .user-row:first-child { border-top: none; }
+      .u-name { font-weight: 500; }
+      .u-badge {
+        font-size: 0.7rem;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid #8884;
+        color: #888;
+      }
+      .u-badge.admin { color: #d97706; border-color: #d9770655; }
+      .u-time { font-size: 0.78rem; color: #888; }
+      .u-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+      .u-actions button {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.7rem;
+        border: 1px solid #8884;
+        background: transparent;
+        color: inherit;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .u-actions button:disabled { opacity: 0.4; cursor: default; }
+      form.add-form { margin-top: 1.2rem; display: grid; gap: 0.6rem; max-width: 22rem; }
+      form.add-form label { font-size: 0.8rem; color: #888; }
+      form.add-form input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.5rem 0.7rem;
+        border: 1px solid #8884;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        background: Field;
+        color: FieldText;
+      }
+      form.add-form button {
+        justify-self: start;
+        padding: 0.55rem 1.1rem;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+      }
+      .msg { font-size: 0.85rem; min-height: 1.2em; }
+      .msg.ok { color: #16a34a; }
+      .msg.err { color: #dc2626; }
+    </style>
+  </head>
+  <body>
+    <div id="gate">加载中…</div>
+    <div id="app" hidden>
+      <header>
+        <h1>👤 账户管理</h1>
+        <a href="/dashboard">← 返回看板</a>
+      </header>
+
+      <div class="card">
+        <strong>账户列表</strong>
+        <p class="muted">管理员账户不可删除。删除账户会永久移除该用户的全部账本数据。</p>
+        <div id="user-list"></div>
+      </div>
+
+      <div class="card">
+        <strong>➕ 新建账户</strong>
+        <form class="add-form" id="add-form">
+          <div>
+            <label for="u-username">用户名</label>
+            <input id="u-username" type="text" required autocomplete="off" />
+          </div>
+          <div>
+            <label for="u-password">初始密码（至少 6 位）</label>
+            <input id="u-password" type="text" required autocomplete="off" />
+          </div>
+          <button type="submit" id="add-btn">创建</button>
+          <p class="msg" id="add-msg"></p>
+        </form>
+      </div>
+    </div>
+    <script>
+      const gate = document.getElementById('gate');
+      const app = document.getElementById('app');
+      const userList = document.getElementById('user-list');
+      const addForm = document.getElementById('add-form');
+      const addMsg = document.getElementById('add-msg');
+
+      let meId = 0;
+
+      // Guard: must be logged in AND admin.
+      fetch('/api/whoami')
+        .then((r) => {
+          if (!r.ok) throw new Error('unauthorized');
+          return r.json();
+        })
+        .then((d) => {
+          if (!d.is_admin) { window.location.replace('/dashboard'); return; }
+          gate.hidden = true;
+          app.hidden = false;
+          loadUsers();
+        })
+        .catch(() => { window.location.href = '/login'; });
+
+      async function loadUsers() {
+        try {
+          const res = await fetch('/api/users');
+          if (!res.ok) throw new Error('failed');
+          const data = await res.json();
+          renderUsers(data.users || []);
+        } catch (e) {
+          userList.innerHTML = '<div class="msg err">加载失败</div>';
+        }
+      }
+
+      function renderUsers(users) {
+        userList.innerHTML = users.map((u) => {
+          const badge = u.is_admin
+            ? '<span class="u-badge admin">管理员</span>'
+            : '<span class="u-badge">普通</span>';
+          const delBtn = u.is_admin
+            ? '<button disabled title="管理员不可删除">删</button>'
+            : `<button onclick="deleteUser(${u.id}, '${escapeAttr(u.username)}')">删</button>`;
+          return `<div class="user-row">
+            <span class="u-name">${escapeHTML(u.username)}</span>
+            ${badge}
+            <span class="u-time">${escapeHTML(u.created_at)}</span>
+            <div class="u-actions">
+              <button onclick="resetPassword(${u.id}, '${escapeAttr(u.username)}')">改密</button>
+              ${delBtn}
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      addForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        addMsg.className = 'msg';
+        addMsg.textContent = '';
+        const username = document.getElementById('u-username').value.trim();
+        const password = document.getElementById('u-password').value;
+        if (password.length < 6) {
+          addMsg.className = 'msg err';
+          addMsg.textContent = '初始密码至少 6 位';
+          return;
+        }
+        try {
+          const res = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error === 'username already taken' ? '用户名已存在'
+              : data.error === 'password too short' ? '密码至少 6 位' : '创建失败');
+          }
+          addMsg.className = 'msg ok';
+          addMsg.textContent = `✅ 账户「${username}」创建成功`;
+          addForm.reset();
+          setTimeout(() => { addMsg.textContent = ''; }, 2500);
+          loadUsers();
+        } catch (err) {
+          addMsg.className = 'msg err';
+          addMsg.textContent = err.message;
+        }
+      });
+
+      window.deleteUser = function (id, name) {
+        if (!confirm(`确定删除账户「${name}」？该用户的所有账本数据将永久删除。`)) return;
+        fetch(`/api/users/${id}`, { method: 'DELETE' })
+          .then((r) => {
+            if (r.status === 400) { alert('管理员账户不可删除'); return Promise.reject(); }
+            return r.ok ? loadUsers() : Promise.reject();
+          })
+          .catch(() => {});
+      };
+
+      window.resetPassword = function (id, name) {
+        const pw = prompt(`为账户「${name}」设置新密码（至少 6 位）：`);
+        if (pw === null) return;
+        if (pw.length < 6) { alert('密码至少 6 位'); return; }
+        fetch(`/api/users/${id}/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: pw }),
+        })
+          .then((r) => {
+            if (r.ok) { alert(`✅ 已重置「${name}」的密码，该用户需用新密码重新登录`); }
+            else alert('重置失败');
+          })
+          .catch(() => alert('重置失败'));
+      };
+
+      function escapeHTML(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
+      function escapeAttr(s) {
+        return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      }
+    </script>
+  </body>
+</html>

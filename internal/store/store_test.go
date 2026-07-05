@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -70,5 +71,72 @@ func TestBackfillDefaultLedger(t *testing.T) {
 	defer s2.Close()
 	if _, err := s2.DefaultLedgerID(u.ID); err != nil {
 		t.Fatalf("expected default ledger after backfill, got: %v", err)
+	}
+}
+
+// TestMigrateIsAdmin simulates a database created before the account-management
+// feature (users table WITHOUT the is_admin column). Reopening the store must
+// add the column via ALTER TABLE and flag the legacy 'admin' account as admin
+// while leaving other users as non-admins. Idempotent on a second reopen.
+func TestMigrateIsAdmin(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Build a legacy users table WITHOUT is_admin, using the raw driver so the
+	// current schema (which already includes is_admin) does not run.
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		webhook_token TEXT UNIQUE NOT NULL,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create legacy users table: %v", err)
+	}
+	now := time.Now().Format(time.RFC3339)
+	if _, err := raw.Exec(
+		"INSERT INTO users (username, password_hash, webhook_token, created_at) VALUES ('admin','x','admintok',?),('alice','y','alicetok',?)",
+		now, now,
+	); err != nil {
+		t.Fatalf("seed legacy users: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	// Reopen through Open() -> migrate() -> migrateIsAdmin() adds the column.
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen after legacy schema: %v", err)
+	}
+	defer s.Close()
+
+	admin, err := s.UserByUsername("admin")
+	if err != nil {
+		t.Fatalf("lookup admin: %v", err)
+	}
+	if !admin.IsAdmin {
+		t.Fatal("expected legacy 'admin' user to be flagged is_admin=1 after migration")
+	}
+	alice, err := s.UserByUsername("alice")
+	if err != nil {
+		t.Fatalf("lookup alice: %v", err)
+	}
+	if alice.IsAdmin {
+		t.Fatal("expected non-admin user 'alice' to remain is_admin=0 after migration")
+	}
+
+	// Idempotency: reopening again must not fail (column already present).
+	s.Close()
+	s2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("second reopen (idempotency): %v", err)
+	}
+	defer s2.Close()
+	if a2, err := s2.UserByUsername("admin"); err != nil || !a2.IsAdmin {
+		t.Fatalf("admin flag lost on second reopen: err=%v", err)
 	}
 }

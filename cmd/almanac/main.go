@@ -127,6 +127,7 @@ func logoutHandler(st *store.Store) http.HandlerFunc {
 // whoamiResponse is returned by GET /api/whoami.
 type whoamiResponse struct {
 	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
 }
 
 func whoamiHandler(st *store.Store) http.HandlerFunc {
@@ -142,7 +143,7 @@ func whoamiHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(whoamiResponse{Username: u.Username})
+		_ = json.NewEncoder(w).Encode(whoamiResponse{Username: u.Username, IsAdmin: u.IsAdmin})
 	}
 }
 
@@ -471,6 +472,169 @@ func categoryItemHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// requireAdmin returns the current user if they are an authenticated admin.
+// Otherwise it writes the appropriate error (401 unauthenticated / 403
+// non-admin) and returns nil, so callers can just `return` on nil.
+func requireAdmin(st *store.Store, w http.ResponseWriter, r *http.Request) *store.User {
+	u := currentUser(st, r)
+	if u == nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+		return nil
+	}
+	if !u.IsAdmin {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "forbidden: admin only"})
+		return nil
+	}
+	return u
+}
+
+// createUserRequest is the body for POST /api/users.
+type createUserRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// resetPasswordRequest is the body for POST /api/users/{id}/reset-password.
+type resetPasswordRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
+// usersHandler serves GET (list) and POST (create) on /api/users. Admin only.
+func usersHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if requireAdmin(st, w, r) == nil {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			users, err := st.ListUsers()
+			if err != nil {
+				log.Printf("list users error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"users": users})
+
+		case http.MethodPost:
+			var req createUserRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+				return
+			}
+			req.Username = strings.TrimSpace(req.Username)
+			if req.Username == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "username is required"})
+				return
+			}
+			if len(req.Password) < minPasswordLen {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "password too short"})
+				return
+			}
+			id, err := st.CreateUser(req.Username, req.Password)
+			if err != nil {
+				if err == store.ErrUsernameTaken {
+					w.WriteHeader(http.StatusConflict)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "username already taken"})
+					return
+				}
+				log.Printf("create user error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id, "username": req.Username})
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// userItemHandler serves DELETE /api/users/{id} and
+// POST /api/users/{id}/reset-password. Admin only.
+func userItemHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if requireAdmin(st, w, r) == nil {
+			return
+		}
+
+		rest := strings.TrimPrefix(r.URL.Path, "/api/users/")
+		idStr := rest
+		isReset := false
+		if strings.HasSuffix(rest, "/reset-password") {
+			idStr = strings.TrimSuffix(rest, "/reset-password")
+			isReset = true
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid user id"})
+			return
+		}
+
+		if isReset {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var req resetPasswordRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+				return
+			}
+			if len(req.NewPassword) < minPasswordLen {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "password too short"})
+				return
+			}
+			if err := st.AdminResetPassword(id, req.NewPassword); err != nil {
+				if err == store.ErrUserNotFound {
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "user not found"})
+					return
+				}
+				log.Printf("reset password error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			return
+		}
+
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := st.DeleteUser(id); err != nil {
+			switch err {
+			case store.ErrCannotDeleteAdmin:
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "cannot delete an administrator account"})
+			case store.ErrUserNotFound:
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "user not found"})
+			default:
+				log.Printf("delete user error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+			}
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp := healthResponse{
@@ -547,6 +711,8 @@ func main() {
 	mux.Handle("/api/entries", entriesHandler(st))
 	mux.Handle("/api/categories", categoriesHandler(st))
 	mux.Handle("/api/categories/", categoryItemHandler(st))
+	mux.Handle("/api/users", usersHandler(st))
+	mux.Handle("/api/users/", userItemHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

@@ -1,5 +1,6 @@
 ---
 // Almanac Categories 2.0 - Visual Overhaul
+import Sidebar from '../components/Sidebar.astro';
 const title = '分类管理 · Almanac';
 ---
 
@@ -21,10 +22,6 @@ const title = '分类管理 · Almanac';
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
-      .sidebar-item-active {
-        background: rgba(37, 99, 235, 0.1);
-        color: #2563eb;
-      }
       dialog::backdrop { background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px); }
       /* Custom Scrollbar */
       ::-webkit-scrollbar { width: 6px; }
@@ -33,34 +30,8 @@ const title = '分类管理 · Almanac';
     </style>
   </head>
   <body class="bg-slate-50 text-slate-900 min-h-screen flex">
-    <!-- Sidebar (Same as Dashboard 2.0) -->
-    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20">
-      <div class="p-6 text-blue-600 flex items-center gap-3">
-        <i class="lucide-book-open w-8 h-8"></i>
-        <span class="text-xl font-bold tracking-tight text-slate-800">Almanac</span>
-      </div>
-      
-      <nav class="flex-1 px-4 space-y-1">
-        <a href="/dashboard" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-50 font-medium transition-all">
-          <i class="lucide-layout-dashboard w-5 h-5"></i>
-          <span>概览看板</span>
-        </a>
-        <a href="/categories" class="sidebar-item-active flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all">
-          <i class="lucide-tags w-5 h-5"></i>
-          <span>分类管理</span>
-        </a>
-      </nav>
-
-      <div class="p-4 border-t border-slate-100">
-        <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50">
-          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm" id="user-avatar">?</div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-semibold truncate" id="user-name">Loading...</p>
-            <p class="text-xs text-slate-400 truncate" id="user-role">...</p>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <!-- Sidebar -->
+    <Sidebar activePage="categories" />
 
     <!-- Main Content -->
     <main class="flex-1 ml-64 p-8 max-w-5xl">
@@ -160,16 +131,10 @@ const title = '分类管理 · Almanac';
 
     <script>
       let categories = [];
-      const userAvatar = document.getElementById('user-avatar');
-      const userName = document.getElementById('user-name');
-      const userRole = document.getElementById('user-role');
 
       fetch('/api/whoami')
         .then(r => r.json())
         .then(d => {
-          userName.textContent = d.username;
-          userRole.textContent = d.is_admin ? '超级管理员' : '普通用户';
-          userAvatar.textContent = d.username[0].toUpperCase();
           loadCategories();
         }).catch(() => window.location.href = '/login');
 

@@ -1,0 +1,88 @@
+---
+// web/src/components/Sidebar.astro
+const { activePage } = Astro.props;
+
+const menuItems = [
+  { name: '概览看板', icon: 'lucide-layout-dashboard', href: '/dashboard', id: 'dashboard' },
+  { name: '分类管理', icon: 'lucide-tags', href: '/categories', id: 'categories' },
+];
+---
+
+<aside class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20">
+  <div class="p-6">
+    <div class="flex items-center gap-3 text-blue-600">
+      <i class="lucide-book-open w-8 h-8"></i>
+      <span class="text-xl font-bold tracking-tight text-slate-800">Almanac</span>
+    </div>
+  </div>
+  
+  <nav class="flex-1 px-4 space-y-1">
+    {menuItems.map((item) => (
+      <a 
+        href={item.href} 
+        class={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${
+          activePage === item.id 
+            ? 'bg-blue-50 text-blue-600' 
+            : 'text-slate-600 hover:bg-slate-50'
+        }`}
+      >
+        <i class={`${item.icon} w-5 h-5`}></i>
+        <span>{item.name}</span>
+      </a>
+    ))}
+    <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 cursor-not-allowed font-medium transition-all">
+      <i class="lucide-bar-chart-3 w-5 h-5"></i>
+      <span>统计报表</span>
+      <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 ml-auto">TBD</span>
+    </a>
+  </nav>
+
+  <div class="p-4 border-t border-slate-100">
+    <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50">
+      <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm" id="sidebar-user-avatar">
+        ?
+      </div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-semibold truncate" id="sidebar-user-name">Loading...</p>
+        <p class="text-xs text-slate-400 truncate" id="sidebar-user-role">...</p>
+      </div>
+      <button id="sidebar-logout-btn" class="text-slate-400 hover:text-rose-500 transition-colors">
+        <i class="lucide-log-out w-4 h-4"></i>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<script>
+  // Shared logic for the sidebar across all pages
+  function initSidebar() {
+    const avatar = document.getElementById('sidebar-user-avatar');
+    const name = document.getElementById('sidebar-user-name');
+    const role = document.getElementById('sidebar-user-role');
+    const logoutBtn = document.getElementById('sidebar-logout-btn');
+
+    if (!avatar || !name || !role) return;
+
+    fetch('/api/whoami')
+      .then(r => r.json())
+      .then(d => {
+        name.textContent = d.username;
+        role.textContent = d.is_admin ? '超级管理员' : '普通用户';
+        avatar.textContent = d.username[0].toUpperCase();
+      })
+      .catch(() => {
+        if (window.location.pathname !== '/login') window.location.href = '/login';
+      });
+
+    if (logoutBtn) {
+      logoutBtn.onclick = async () => {
+        await fetch('/api/logout', { method: 'POST' });
+        window.location.href = '/login';
+      };
+    }
+  }
+
+  // Support both normal load and Astro View Transitions
+  initSidebar();
+  document.addEventListener('astro:after-swap', initSidebar);
+</script>

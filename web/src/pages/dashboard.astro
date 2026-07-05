@@ -1,6 +1,7 @@
 ---
 // Almanac Dashboard 2.0 - Visual Overhaul
-const title = '看板 2.0 · Almanac';
+import Sidebar from '../components/Sidebar.astro';
+const title = '看板 · Almanac';
 ---
 
 <!doctype html>
@@ -24,10 +25,6 @@ const title = '看板 2.0 · Almanac';
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
       }
-      .sidebar-item-active {
-        background: rgba(37, 99, 235, 0.1);
-        color: #2563eb;
-      }
       /* Custom Scrollbar */
       ::-webkit-scrollbar { width: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
@@ -37,45 +34,7 @@ const title = '看板 2.0 · Almanac';
   </head>
   <body class="bg-slate-50 text-slate-900 min-h-screen flex">
     <!-- Sidebar -->
-    <aside class="w-64 bg-white border-r border-slate-200 flex flex-col fixed h-full z-20">
-      <div class="p-6">
-        <div class="flex items-center gap-3 text-blue-600">
-          <i class="lucide-book-open w-8 h-8"></i>
-          <span class="text-xl font-bold tracking-tight text-slate-800">Almanac</span>
-        </div>
-      </div>
-      
-      <nav class="flex-1 px-4 space-y-1">
-        <a href="/dashboard2" class="sidebar-item-active flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all">
-          <i class="lucide-layout-dashboard w-5 h-5"></i>
-          <span>概览看板</span>
-        </a>
-        <a href="/categories" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-600 hover:bg-slate-50 font-medium transition-all">
-          <i class="lucide-tags w-5 h-5"></i>
-          <span>分类管理</span>
-        </a>
-        <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 cursor-not-allowed font-medium transition-all">
-          <i class="lucide-bar-chart-3 w-5 h-5"></i>
-          <span>统计报表</span>
-          <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 ml-auto">TBD</span>
-        </a>
-      </nav>
-
-      <div class="p-4 border-t border-slate-100">
-        <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50">
-          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm" id="user-avatar">
-            ?
-          </div>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-semibold truncate" id="user-name">Loading...</p>
-            <p class="text-xs text-slate-400 truncate" id="user-role">...</p>
-          </div>
-          <button id="logout-btn" class="text-slate-400 hover:text-rose-500 transition-colors">
-            <i class="lucide-log-out w-4 h-4"></i>
-          </button>
-        </div>
-      </div>
-    </aside>
+    <Sidebar activePage="dashboard" />
 
     <!-- Main Content -->
     <main class="flex-1 ml-64 p-8 max-w-5xl">
@@ -207,9 +166,6 @@ const title = '看板 2.0 · Almanac';
 
     <script>
       // Shared logic (Copied & adapted from dashboard.astro)
-      const userAvatar = document.getElementById('user-avatar');
-      const userName = document.getElementById('user-name');
-      const userRole = document.getElementById('user-role');
       const greetingName = document.getElementById('greeting-name');
       const adminAction = document.getElementById('admin-action');
 
@@ -219,20 +175,12 @@ const title = '看板 2.0 · Almanac';
           return r.json();
         })
         .then(d => {
-          userName.textContent = d.username;
           greetingName.textContent = d.username;
-          userRole.textContent = d.is_admin ? '超级管理员' : '普通用户';
-          userAvatar.textContent = d.username[0].toUpperCase();
           if (d.is_admin) adminAction.classList.remove('hidden');
           loadWebhookToken();
           loadCategories().then(loadEntries);
         })
         .catch(() => window.location.href = '/login');
-
-      document.getElementById('logout-btn').onclick = async () => {
-        await fetch('/api/logout', { method: 'POST' });
-        window.location.href = '/login';
-      };
 
       // Webhook Logic
       const whUrl = document.getElementById('wh-url');

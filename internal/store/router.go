@@ -7,7 +7,9 @@
 //   - Within a direction, rules are ordered by level DESC, sort_order ASC,
 //     id ASC, so the most specific (deepest) category wins; first match stops.
 //   - Bare keywords act as "contains" matches because Go regexp is unanchored;
-//     users write ^...$ for exact matches.
+//     users write ^...$ for exact matches. A category with no regex defaults to
+//     an exact, case-sensitive full match on its own name (^QuoteMeta(name)$),
+//     so every category participates in routing.
 //   - Any category mutation invalidates that user's cache; the next
 //     classification lazily rebuilds it.
 package store
@@ -132,8 +134,11 @@ func (s *Store) ClassifyEntry(userID int64, amountCents int64, rawType string) (
 	if amountCents > 0 {
 		rules = set.income
 	}
+	// Trim so a webhook description with leading/trailing spaces can still
+	// satisfy an exact full-match rule (^name$).
+	raw := strings.TrimSpace(rawType)
 	for i := range rules {
-		if rules[i].re.MatchString(rawType) {
+		if rules[i].re.MatchString(raw) {
 			id := rules[i].categoryID
 			return &id, nil
 		}
@@ -162,12 +167,13 @@ func (s *Store) rulesFor(userID int64) (*compiledRuleSet, error) {
 	return set, nil
 }
 
-// buildRuleSet loads the user's categories that carry a non-empty regex,
-// compiles each pattern, and returns them split by direction and sorted by
-// match priority. A category with an invalid regex is skipped (logged by the
-// caller path is unnecessary: save-time validation already rejects bad
-// patterns; this is a defensive fallback) so one bad rule can't disable the
-// whole set.
+// buildRuleSet loads the user's categories, compiles each into a matcher, and
+// returns them split by direction and sorted by match priority. A category with
+// a non-empty regex uses that pattern; one with an empty regex falls back to an
+// exact full match on its name (^QuoteMeta(name)$). A category whose pattern
+// fails to compile is skipped (save-time validation already rejects bad
+// user-supplied patterns; this is a defensive fallback) so one bad rule can't
+// disable the whole set.
 func (s *Store) buildRuleSet(userID int64) (*compiledRuleSet, error) {
 	cats, err := s.ListCategories(userID)
 	if err != nil {
@@ -176,10 +182,14 @@ func (s *Store) buildRuleSet(userID int64) (*compiledRuleSet, error) {
 	set := &compiledRuleSet{byID: make(map[int64]catNode, len(cats))}
 	for _, c := range cats {
 		set.byID[c.ID] = catNode{name: c.Name, parentID: c.ParentID}
-		if c.Regex == "" {
-			continue
+		// A category without a regex defaults to an exact, case-sensitive
+		// full match on its own name. QuoteMeta escapes any regex metachars
+		// in the name (e.g. "生活/娱乐", "C++") so anchoring can't break.
+		pattern := c.Regex
+		if pattern == "" {
+			pattern = "^" + regexp.QuoteMeta(c.Name) + "$"
 		}
-		re, err := regexp.Compile(c.Regex)
+		re, err := regexp.Compile(pattern)
 		if err != nil {
 			continue // skip invalid rule, keep the rest usable
 		}

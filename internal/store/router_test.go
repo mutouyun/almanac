@@ -384,3 +384,68 @@ func TestUpdateEntryCategoryCrossUser(t *testing.T) {
 		t.Fatalf("cross-user must be ErrEntryNotFound, got %v", err)
 	}
 }
+
+// TestRouteDefaultExactMatch: a category with no regex falls back to an
+// exact, case-sensitive full match on its own name -- not a substring match,
+// and not case-insensitive. Leading/trailing whitespace in the raw text is
+// trimmed before comparison.
+func TestRouteDefaultExactMatch(t *testing.T) {
+	s, uid := newTestStore(t)
+	coffee := mkcat(t, s, uid, nil, "Coffee", -1, 0, "")
+
+	// Exact match -> hits.
+	if got := classify(t, s, uid, -1990, "Coffee"); got != coffee {
+		t.Fatalf("exact match: got %d, want %d", got, coffee)
+	}
+	// Leading/trailing whitespace is trimmed before comparing.
+	if got := classify(t, s, uid, -1990, "  Coffee  "); got != coffee {
+		t.Fatalf("trimmed exact match: got %d, want %d", got, coffee)
+	}
+	// Substring (not a full match) must NOT hit -- this is exact match, not
+	// contains match.
+	if got := classify(t, s, uid, -1990, "Luckin Coffee"); got != 0 {
+		t.Fatalf("substring must not match exact rule, got %d", got)
+	}
+	// Case-sensitive: different case must NOT hit.
+	if got := classify(t, s, uid, -1990, "coffee"); got != 0 {
+		t.Fatalf("case mismatch must not match, got %d", got)
+	}
+}
+
+// TestRouteDefaultExactMatchMetacharsSafe: a category name containing regex
+// metacharacters must still work as a literal exact match (QuoteMeta), not
+// break compilation or match unintended text.
+func TestRouteDefaultExactMatchMetacharsSafe(t *testing.T) {
+	s, uid := newTestStore(t)
+	cat := mkcat(t, s, uid, nil, "生活/娱乐", -1, 0, "")
+
+	if got := classify(t, s, uid, -100, "生活/娱乐"); got != cat {
+		t.Fatalf("literal metachar name should match itself: got %d, want %d", got, cat)
+	}
+	// If "/" were treated as a real regex alternation-adjacent operator this
+	// could misbehave; confirm an unrelated string does not match.
+	if got := classify(t, s, uid, -100, "生活娱乐"); got != 0 {
+		t.Fatalf("non-exact text must not match, got %d", got)
+	}
+}
+
+// TestRouteDefaultExactMatchDeeperCategoryStillWins: default-exact-match
+// categories still participate in the same level/sort_order priority as
+// regex categories -- a deeper, more specific match wins over a shallower
+// default-name match even though both now generate a rule.
+func TestRouteDefaultExactMatchDeeperCategoryStillWins(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")     // level 1, default exact match on "餐饮"
+	coffee := mkcat(t, s, uid, &food, "咖啡", -1, 0, "瑞幸") // level 2, regex
+
+	// "餐饮" exactly equals the parent's name -> parent hits (no ambiguity,
+	// child's rule is "瑞幸" which doesn't appear here).
+	if got := classify(t, s, uid, -100, "餐饮"); got != food {
+		t.Fatalf("root default-exact match: got %d, want %d", got, food)
+	}
+	// "瑞幸咖啡" matches the child's contains-regex; child (deeper level) wins
+	// even though it isn't an exact match of its own name.
+	if got := classify(t, s, uid, -100, "瑞幸咖啡"); got != coffee {
+		t.Fatalf("deeper regex match should win: got %d, want %d", got, coffee)
+	}
+}

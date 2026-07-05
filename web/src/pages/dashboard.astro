@@ -96,6 +96,24 @@ const title = '看板 · Almanac';
       .wh-actions .primary { border: none; background: #2563eb; color: #fff; }
       .wh-msg { font-size: 0.8rem; min-height: 1.1em; margin-top: 0.5rem; color: #16a34a; }
       .wh-msg.err { color: #dc2626; }
+      .entry-row {
+        border-top: 1px solid #8882;
+        padding: 0.8rem 0;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0.8rem;
+        align-items: baseline;
+      }
+      .entry-row:first-child { border-top: none; padding-top: 0; }
+      .entry-time { font-size: 0.85rem; color: #888; white-space: nowrap; }
+      .entry-desc { font-size: 0.95rem; }
+      .entry-cat { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
+      .entry-amount { font-size: 0.95rem; font-weight: 600; white-space: nowrap; }
+      .entry-amount.expense { color: #dc2626; }
+      .entry-amount.income { color: #16a34a; }
+      #entries-list { margin-top: 1rem; }
+      .entries-total { font-size: 0.8rem; color: #888; margin-top: 0.8rem; }
+      .entries-empty { color: #888; margin-top: 1rem; }
     </style>
   </head>
   <body>
@@ -148,6 +166,14 @@ const title = '看板 · Almanac';
           <p class="pw-msg" id="pw-msg"></p>
         </form>
       </div>
+
+      <div class="card">
+        <strong>📊 账目明细</strong>
+        <p class="muted">最近的账目记录（倒序，待分类的显示为“未分类”）。</p>
+        <div id="entries-loading" class="muted" style="margin-top:1rem;">加载中…</div>
+        <div id="entries-list" hidden></div>
+        <div id="entries-error" class="pw-msg err" hidden></div>
+      </div>
     </div>
 
     <script>
@@ -164,6 +190,7 @@ const title = '看板 · Almanac';
           gate.hidden = true;
           app.hidden = false;
           loadWebhookToken();
+          loadEntries();
         })
         .catch(() => {
           window.location.href = '/login';
@@ -270,6 +297,53 @@ const title = '看板 · Almanac';
           pwBtn.textContent = '修改密码';
         }
       });
+
+      // Load entries list
+      const entriesLoading = document.getElementById('entries-loading');
+      const entriesList = document.getElementById('entries-list');
+      const entriesError = document.getElementById('entries-error');
+
+      async function loadEntries() {
+        try {
+          const res = await fetch('/api/entries?limit=20');
+          if (!res.ok) throw new Error('failed');
+          const data = await res.json();
+          entriesLoading.hidden = true;
+          if (data.entries.length === 0) {
+            entriesList.innerHTML = '<div class="entries-empty">还没有账目记录</div>';
+            entriesList.hidden = false;
+            return;
+          }
+          entriesList.innerHTML = data.entries.map(e => {
+            const cents = e.amount_cents;
+            const isExpense = cents < 0;
+            const yuan = (Math.abs(cents) / 100).toFixed(2);
+            const amtClass = isExpense ? 'expense' : 'income';
+            const amtText = isExpense ? `-¥${yuan}` : `+¥${yuan}`;
+            const cat = e.category_name || '未分类';
+            return `<div class="entry-row">
+              <div class="entry-time">${e.record_time}</div>
+              <div>
+                <div class="entry-desc">${escapeHTML(e.raw_type)}</div>
+                <div class="entry-cat">${escapeHTML(cat)}</div>
+              </div>
+              <div class="entry-amount ${amtClass}">${amtText}</div>
+            </div>`;
+          }).join('');
+          entriesList.innerHTML += `<div class="entries-total">共 ${data.total} 条记录</div>`;
+          entriesList.hidden = false;
+        } catch (e) {
+          entriesLoading.hidden = true;
+          entriesError.textContent = '加载失败，请刷新重试';
+          entriesError.hidden = false;
+        }
+      }
+
+      function escapeHTML(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
     </script>
   </body>
 </html>

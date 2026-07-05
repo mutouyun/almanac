@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/mutouyun/almanac/internal/store"
@@ -274,6 +275,59 @@ func webhookTokenResetHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// entriesResponse is the payload for GET /api/entries.
+type entriesResponse struct {
+	Entries []store.EntryRow `json:"entries"`
+	Total   int              `json:"total"`
+	Limit   int              `json:"limit"`
+	Offset  int              `json:"offset"`
+}
+
+// entriesHandler serves the current user's ledger entries, newest first, with
+// limit/offset pagination. Requires a valid session cookie.
+func entriesHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		offset := 0
+		if v := r.URL.Query().Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				offset = n
+			}
+		}
+
+		entries, total, err := st.ListEntries(u.ID, limit, offset)
+		if err != nil {
+			log.Printf("list entries error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(entriesResponse{
+			Entries: entries,
+			Total:   total,
+			Limit:   limit,
+			Offset:  offset,
+		})
+	}
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp := healthResponse{
@@ -347,6 +401,7 @@ func main() {
 	mux.Handle("/api/webhook/entry", webhookHandler(st))
 	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
+	mux.Handle("/api/entries", entriesHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

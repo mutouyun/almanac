@@ -457,6 +457,65 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return id, nil
 }
 
+// EntryRow is one ledger entry as shown in list views. CategoryName is empty
+// when the entry is still unclassified (category_id IS NULL).
+type EntryRow struct {
+	ID           int64   `json:"id"`
+	AmountCents  int64   `json:"amount_cents"`
+	RawType      string  `json:"raw_type"`
+	RecordTime   string  `json:"record_time"`
+	Note         string  `json:"note"`
+	Source       string  `json:"source"`
+	CategoryID   *int64  `json:"category_id"`
+	CategoryName string  `json:"category_name"`
+}
+
+// ListEntries returns a page of the user's ledger entries, newest first
+// (by record_time then id). limit is clamped to [1,200]; offset is floored
+// at 0. It also returns the total row count for pagination.
+func (s *Store) ListEntries(userID int64, limit, offset int) ([]EntryRow, int, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM ledger_entries WHERE user_id = ?", userID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count entries: %w", err)
+	}
+
+	rows, err := s.db.Query(`
+SELECT e.id, e.amount_cents, e.raw_type, e.record_time,
+       COALESCE(e.note, ''), e.source, e.category_id, COALESCE(c.name, '')
+FROM ledger_entries e
+LEFT JOIN categories c ON c.id = e.category_id
+WHERE e.user_id = ?
+ORDER BY e.record_time DESC, e.id DESC
+LIMIT ? OFFSET ?`, userID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list entries: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]EntryRow, 0, limit)
+	for rows.Next() {
+		var e EntryRow
+		if err := rows.Scan(&e.ID, &e.AmountCents, &e.RawType, &e.RecordTime,
+			&e.Note, &e.Source, &e.CategoryID, &e.CategoryName); err != nil {
+			return nil, 0, fmt.Errorf("scan entry: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate entries: %w", err)
+	}
+	return entries, total, nil
+}
+
 // RegenerateWebhookToken issues a fresh webhook token for the user and returns
 // the new value. The old token immediately stops working.
 func (s *Store) RegenerateWebhookToken(userID int64) (string, error) {

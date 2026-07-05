@@ -69,6 +69,9 @@ func Open(dbPath string) (*Store, error) {
 	if err := s.seedAdmin(); err != nil {
 		return nil, err
 	}
+	if err := s.backfillDefaultLedgers(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -233,6 +236,41 @@ func (s *Store) RecordVisit(now time.Time) (int64, error) {
 		return 0, fmt.Errorf("count visits: %w", err)
 	}
 	return count, nil
+}
+
+// backfillDefaultLedgers ensures every user has a default ledger. It repairs
+// accounts created before the ledgers table existed (e.g. the original admin
+// seeded at an earlier schema version), and is a harmless no-op otherwise.
+func (s *Store) backfillDefaultLedgers() error {
+	rows, err := s.db.Query(`
+SELECT u.id FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM ledgers l WHERE l.user_id = u.id AND l.is_default = 1)`)
+	if err != nil {
+		return fmt.Errorf("scan users without default ledger: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("scan user id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate users: %w", err)
+	}
+	now := time.Now().Format(time.RFC3339)
+	for _, id := range ids {
+		if _, err := s.db.Exec(
+			"INSERT INTO ledgers (user_id, name, is_default, created_at, updated_at) VALUES (?, '默认账本', 1, ?, ?)",
+			id, now, now,
+		); err != nil {
+			return fmt.Errorf("backfill default ledger for user %d: %w", id, err)
+		}
+		log.Printf("backfilled default ledger for user %d", id)
+	}
+	return nil
 }
 
 // UserByUsername looks up a user by username. Returns ErrUserNotFound if none.

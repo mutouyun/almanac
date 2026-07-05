@@ -1,4 +1,4 @@
-# Almanac Ledger 数据模型设计文档 v2.6
+# Almanac Ledger 数据模型设计文档 v2.7
 
 > 上游依据：`docs/ledger_requirements.md` (v1.10)、`docs/ledger_interaction_design.md` (v1.4)
 > 本文从交互设计反推数据实体，定义表结构、约束、索引、触发器与关系。所有关键决策已落定（见第 6 节）。
@@ -89,6 +89,10 @@ erDiagram
 | `updated_at` | TEXT | NOT NULL | |
 
 - 第一阶段每用户自动创建 1 个默认账本。该表为**前瞻预留**（决策点 A），使未来升级单用户多账本时无需改表结构。
+- **默认账本唯一性（DB 层兵底）**：关系型库无法用普通约束限制“每用户最多一行 `is_default=1`”。多账本阶段若应用层 Bug（并发创建/事务回滚不全/误手 UPDATE）可能出现两个默认账本，导致 Webhook 入账 `SELECT ... WHERE is_default=1` 拿到多行而崩溃。用**局部唯一索引**在 DB 层强制每用户最多一个默认账本（SQLite 3.8+ 支持，仅对 `is_default=1` 的行建索引，零额外开销）：
+```sql
+CREATE UNIQUE INDEX idx_user_default_ledger ON ledgers(user_id) WHERE is_default = 1;
+```
 
 ### 3.3 `categories`（分类树表）
 | 字段 | 类型 | 约束 | 说明 |
@@ -117,7 +121,7 @@ erDiagram
 | `user_id` | INTEGER | NOT NULL FK→users.id ON DELETE CASCADE | 所属用户 |
 | `ledger_id` | INTEGER | NOT NULL FK→ledgers.id ON DELETE CASCADE | 入库时解析为该用户默认账本 id |
 | `category_id` | INTEGER | FK→categories.id **ON DELETE SET NULL** NULL | 归类节点（任意层级）；NULL=待分类 |
-| `amount_cents` | INTEGER | NOT NULL | 金额**带符号**，单位：分。支出负/收入正。由输入元值经应用层 `round(amount*100)` 得到。 |
+| `amount_cents` | INTEGER | NOT NULL CHECK(amount_cents != 0) | 金额**带符号**，单位：分。支出负/收入正，非零。由输入元值经应用层 `round(amount*100)` 得到。 |
 | `raw_type` | TEXT | NOT NULL | 原始描述（Webhook 的 `type`） |
 | `record_time` | TEXT | NOT NULL | 记账时间（`YYYY-MM-DD HH:mm` 定长 ISO，东八区墙钟） |
 | `note` | TEXT | NULL | 备注（手动记账/补充用） |
@@ -130,7 +134,7 @@ erDiagram
 - **方向判定**：`amount_cents` 符号即方向。支出=`SUM WHERE <0`、收入=`SUM WHERE >0`；待分类仍能靠符号统计。
 - **删除策略**：`category_id` 为 `ON DELETE SET NULL`——删分类时历史账目自动退回“待分类”，不丢账不报错。
 - **归类校验**：应用层校验金额符号与归类节点 `direction` 一致。
-- **幂等去重**：**不加全量 UNIQUE 约束**（允许同分钟同额合法重复）。去重仅在 CSV 导入链路的**应用层导入事务内**处理：逐行以（`record_time` + `raw_type` + `amount_cents`）为键与**库中已有记录**比对，命中则跳过（防止重复上传同一 CSV），与交互设计 §6.2 查重键一致。**（决策点 F）**
+- **幂等去重**：**不加全量 UNIQUE 约束**（允许同分钟同额合法重复）。去重仅在 CSV 导入链路的**应用层导入事务内**处理：逐行以（`record_time` + `raw_type` + `amount_cents`）为键与**库中已有记录**比对，命中则跳过（防止重复上传同一 CSV），与交互设计 §6.2 查重键一致。**注：去重比对锤点必须锁定“批次开始前的存量数据”**（如 `created_at < :batch_start` 或等价批次标记），**不得“边插边比”**——否则依据事务自身可见性，CSV 文件内的合法重复行（真在同分钟两笔同额消费）会被误拦。**（决策点 F）**
 - 索引：`(user_id, record_time)`（时光轴/月份筛选）；`(user_id, category_id)`（分类汇总与待分类快查）。
 
 ### 3.5 触发器：方向继承强校验 + 多租户隔离
@@ -252,3 +256,4 @@ WHERE user_id = :uid AND ledger_id = :ledger_id AND substr(record_time, 1, 7) = 
 - v2.4 (2026-07-05)：补两道防线——金额入参严禁 float64 接收（强制 json.Number 或字符串，源头防 IEEE 754 截断）；3.5 触发器增加多租户隔离校验（父节点必须属同一用户，堵跨租户嫁接越权）。
 - v2.5 (2026-07-05)：修路由与多账本一致性——4.2 路由拉取补 `direction` 过滤（先按 amount 符号定方向，不跨方向试匹）；4.1/4.3 查询补 `ledger_id` 过滤（前瞻多账本）；第 5 节时区归一化明确“主动舍秒 truncate”。
 - v2.6 (2026-07-05)：定栁分类树域界为**用户级共享**（决策点 N）：`categories` 不挂 `ledger_id`，全账本共用一棵分类树；3.3 补域界说明，消除多账本归属盲区。
+- v2.7 (2026-07-05)：三道 DB 层加固——`amount_cents` 补 `CHECK(!= 0)`（零金额堆不进库，与原则对齐）；`ledgers` 补局部唯一索引 `idx_user_default_ledger`（每用户最多一个默认账本）；3.4 去重说明补“批次锤点”机制（不得边插边比，否则误拦文件内合法重复）。

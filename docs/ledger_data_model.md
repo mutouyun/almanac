@@ -9,6 +9,7 @@
 - **多用户隔离**：所有业务表携带 `user_id`，查询强制按用户过滤。
 - **金额精度与方向**：金额以「整数分」**带符号**存储（`INTEGER`）。支出为负、收入为正，¥19.90 支出存为 `-1990`。方向即符号，账目表不设 direction 字段。
 - **元→分转换**：所有输入来源（webhook / manual / csv）金额均为元（小数）。入库前统一由**应用层（Go）使用 decimal 库或字符串移位解析**处理为整数分，**避免 `float64 * 100` 的 IEEE 754 精度截断**（如 19.90 可能变 1989.9999... 导致 round 边界错误）。应用层前置拦截 `amount == 0`。
+- **金额入参禁用 float64 接收**（源头防脏）：Go 接收 Webhook JSON 时，若用 `float64` 字段接 `amount`，`json.Unmarshal` 在进入 decimal 库**之前**就已发生 IEEE 754 精度丢失（`-19.9` → `-19.8999...`），事后 `decimal.NewFromFloat()` 无法回天。**硬约束**：必须用 `json.Number`（`Decoder.UseNumber()`）解析，或强约定客户端传字符串 `"-19.9"`，再交 decimal 库处理；严禁用 `float64` 接入参。
 - **树结构**：分类采用邻接表（`parent_id` 自引用），配合 SQLite 递归 CTE 做多级汇总。层级 ≤ 5。
 - **叶子实时派生**：不存 `is_leaf` 字段。是否叶子由「有无子节点」实时判定（`NOT EXISTS` 子查询），从结构上消除状态同步问题，并天然实现"非叶子节点路由自动失效"。
 - **正则包含匹配**：分类的 `regex` 存**裸关键词**（如 `瑞幸`），依托 Go `regexp.MatchString` 的非锚定特性天然实现包含匹配；精确匹配由用户在高级模式手写 `^...$`。
@@ -128,28 +129,36 @@ erDiagram
 - **方向判定**：`amount_cents` 符号即方向。支出=`SUM WHERE <0`、收入=`SUM WHERE >0`；待分类仍能靠符号统计。
 - **删除策略**：`category_id` 为 `ON DELETE SET NULL`——删分类时历史账目自动退回“待分类”，不丢账不报错。
 - **归类校验**：应用层校验金额符号与归类节点 `direction` 一致。
-- **幂等去重**：**不加全量 UNIQUE 约束**（允许同分钟同额合法重复）。去重仅在 CSV 导入链路的**应用层导入事务内**处理（基于文件内容/批次计算）。**（决策点 F）**
+- **幂等去重**：**不加全量 UNIQUE 约束**（允许同分钟同额合法重复）。去重仅在 CSV 导入链路的**应用层导入事务内**处理：逐行以（`record_time` + `raw_type` + `amount_cents`）为键与**库中已有记录**比对，命中则跳过（防止重复上传同一 CSV），与交互设计 §6.2 查重键一致。**（决策点 F）**
 - 索引：`(user_id, record_time)`（时光轴/月份筛选）；`(user_id, category_id)`（分类汇总与待分类快查）。
 
-### 3.5 触发器：方向继承强校验
+### 3.5 触发器：方向继承强校验 + 多租户隔离
 ```sql
--- 插入时：若有父，强制 direction 与父一致
+-- 插入时：若有父，强制 direction 与父一致，且父必须属同一用户
 CREATE TRIGGER trg_cat_dir_ins BEFORE INSERT ON categories
 WHEN NEW.parent_id IS NOT NULL
 BEGIN
-    SELECT CASE WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
-        THEN RAISE(ABORT, 'direction must inherit from parent') END;
+    SELECT CASE
+        WHEN (SELECT user_id FROM categories WHERE id = NEW.parent_id) <> NEW.user_id
+            THEN RAISE(ABORT, 'parent category must belong to the same user')
+        WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
+            THEN RAISE(ABORT, 'direction must inherit from parent')
+    END;
 END;
 
 -- 更新时：同理
 CREATE TRIGGER trg_cat_dir_upd BEFORE UPDATE ON categories
 WHEN NEW.parent_id IS NOT NULL
 BEGIN
-    SELECT CASE WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
-        THEN RAISE(ABORT, 'direction must inherit from parent') END;
+    SELECT CASE
+        WHEN (SELECT user_id FROM categories WHERE id = NEW.parent_id) <> NEW.user_id
+            THEN RAISE(ABORT, 'parent category must belong to the same user')
+        WHEN (SELECT direction FROM categories WHERE id = NEW.parent_id) <> NEW.direction
+            THEN RAISE(ABORT, 'direction must inherit from parent')
+    END;
 END;
 ```
-> 该不变式下沉到 DB 层，即使应用层 Bug 或直连库修改也无法破坏。
+> 两条不变式一同下沉到 DB 层：**方向继承**防收支语义错乱；**同用户校验**堵住跨租户“嫁接”（恶意/Bug 把 A 的节点 parent_id 指向 B 的分类）导致的越权与报表错乱。即使应用层 Bug 或直连库修改也无法破坏。
 
 ### 3.6 触发器：direction 不可变
 分类方向一旦创建不得修改（否则会连带子树与历史账目的收支语义错乱）。
@@ -236,3 +245,5 @@ WHERE user_id = :uid AND substr(record_time, 1, 7) = :month;
 - v2.0 (2026-07-05)：大修。移除 `is_leaf`（实时派生）；正则改包含匹配存裸词；补外键级联（RESTRICT/SET NULL/CASCADE + PRAGMA）；方向继承触发器；`direction`/`source` CHECK；各表加 `updated_at`；字段映射说明；幂等去重收拢到导入事务层；时区强契约。
 - v2.1 (2026-07-05)：补 direction 不可变触发器；ER 图补 note/source；元→分转换改用 decimal 库避免浮点截断。
 - v2.2 (2026-07-05)：采纳方案 3（账目可挂任意节点）；`leaf_category_id → category_id`；正则全员可配、深度优先 + 同层 `sort_order` 拖拽（合并 `priority`）；路由查询去 `NOT EXISTS`；下钻需“本级直接”伪切片。
+- v2.3 (2026-07-05)：明确 CSV 去重语义为“与库中已有记录比对（record_time+raw_type+amount_cents）”，与交互 §6.2“防止重复导入”对齐，消除“仅批次内去重”歧义。
+- v2.4 (2026-07-05)：补两道防线——金额入参严禁 float64 接收（强制 json.Number 或字符串，源头防 IEEE 754 截断）；3.5 触发器增加多租户隔离校验（父节点必须属同一用户，堵跨租户嫁接越权）。

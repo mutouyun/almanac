@@ -1,4 +1,4 @@
-# Almanac Ledger 数据模型设计文档 v2.7
+# Almanac Ledger 数据模型设计文档 v2.8
 
 > 上游依据：`docs/ledger_requirements.md` (v1.10)、`docs/ledger_interaction_design.md` (v1.4)
 > 本文从交互设计反推数据实体，定义表结构、约束、索引、触发器与关系。所有关键决策已落定（见第 6 节）。
@@ -32,6 +32,7 @@ erDiagram
         string username
         string password_hash
         string webhook_token
+        int is_admin
     }
     ledgers {
         int id PK
@@ -73,6 +74,7 @@ erDiagram
 | `username` | TEXT | UNIQUE NOT NULL | 登录用户名 |
 | `password_hash` | TEXT | NOT NULL | 密码哈希（bcrypt/argon2） |
 | `webhook_token` | TEXT | UNIQUE NOT NULL | Webhook 鉴权令牌，可重置 |
+| `is_admin` | INTEGER | NOT NULL DEFAULT 0 | 管理员标志：1=管理员（可增删改其他账户）/ 0=普通用户。首启播种的 admin 为 1，其余为 0 |
 | `created_at` | TEXT | NOT NULL | 创建时间 |
 | `updated_at` | TEXT | NOT NULL | 最后修改时间 |
 
@@ -257,3 +259,4 @@ WHERE user_id = :uid AND ledger_id = :ledger_id AND substr(record_time, 1, 7) = 
 - v2.5 (2026-07-05)：修路由与多账本一致性——4.2 路由拉取补 `direction` 过滤（先按 amount 符号定方向，不跨方向试匹）；4.1/4.3 查询补 `ledger_id` 过滤（前瞻多账本）；第 5 节时区归一化明确“主动舍秒 truncate”。
 - v2.6 (2026-07-05)：定栁分类树域界为**用户级共享**（决策点 N）：`categories` 不挂 `ledger_id`，全账本共用一棵分类树；3.3 补域界说明，消除多账本归属盲区。
 - v2.7 (2026-07-05)：三道 DB 层加固——`amount_cents` 补 `CHECK(!= 0)`（零金额堆不进库，与原则对齐）；`ledgers` 补局部唯一索引 `idx_user_default_ledger`（每用户最多一个默认账本）；3.4 去重说明补“批次锤点”机制（不得边插边比，否则误拦文件内合法重复）。
+- v2.8 (2026-07-05)：`users` 表补 `is_admin`（INTEGER NOT NULL DEFAULT 0），支撑账户管理（仅管理员可增删改其他账户）；首启播种 admin 为 1，`/api/users` 新建账户为 0；ER 图同步。迁移采用 `ALTER TABLE ... ADD COLUMN` + `UPDATE ... WHERE username='admin'` 回填存量。

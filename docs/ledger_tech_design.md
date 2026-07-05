@@ -295,6 +295,13 @@ flowchart TD
 - **CSV 导入事务**：整批用一个 `BEGIN ... COMMIT` 包裹，失败回滚。去重比对在事务内完成（与批次开始前的存量比对，防误拦文件内合法重复）。
 - **分类树维护事务**：移动节点、删除带级联更新的操作用事务保证原子性。
 
+### 5.7 管理员权限模型（账户管理）
+- **身份字段**：`users.is_admin`（INTEGER，默认 0）。首启 `seedAdmin` 播种的 admin 账户为 1；`/api/users` 创建的新账户固定为 0。迁移时对存量库 `ALTER TABLE users ADD COLUMN is_admin ... DEFAULT 0` 后 `UPDATE ... WHERE username='admin'` 回填。
+- **二元权限**：不做细粒度角色。普通登录用户拥有自己账本的全部权限；`is_admin=1` 额外获得账户管理能力。
+- **鉴权拦截**：`/api/users*` 系列端点先过 Session 鉴权（未登录 401），再检查 `is_admin`（非管理员 403）。前端依 `/api/auth/me` 返回的 `is_admin` 决定是否渲染“账户管理”入口（仅 UI 提示，真正拦截在后端）。
+- **不可删管理员**：删除目标 `is_admin=1` 一律拒绝（含管理员自删），保证系统始终留有管理入口。
+- **重置密码即登出**：管理员重置他人密码后同步 `DeleteUserSessions` 清会话，与自助改密一致。
+
 ## 6. API 端点清单
 
 > 所有端点除 `/health` 外均需鉴权。路由用标准库 `http.ServeMux`（Go 1.22+ 支持路径参数 `{id}`）。
@@ -310,7 +317,7 @@ flowchart TD
 | :--- | :--- | :--- | :--- | :--- |
 | POST | `/api/auth/login` | 无 | `{username, password}` | 会话 token / Set-Cookie |
 | POST | `/api/auth/logout` | Session | 无 | 清除会话，200 |
-| GET | `/api/auth/me` | Session | 无 | 当前用户信息 `{id, username}` |
+| GET | `/api/auth/me` | Session | 无 | 当前用户信息 `{id, username, is_admin}`（`is_admin` 供前端判定是否显示账户管理入口；实际实现路径 `/api/whoami`） |
 | GET | `/api/auth/webhook-token` | Session | 无 | 返回当前用户 webhook_token（供设置页展示/复制） |
 | POST | `/api/auth/webhook-token/regenerate` | Session | 无 | 重新生成，旧 token 立即失效，返回新 token |
 | POST | `/api/auth/password` | Session | `{old_password, new_password}` | 修改登录密码（校验旧密码） |
@@ -347,6 +354,22 @@ flowchart TD
 | :--- | :--- | :--- | :--- | :--- |
 | POST | `/api/import/csv` | Session | `multipart/form-data` CSV 文件 | 预览解析结果 + 试跑归类 |
 | POST | `/api/import/confirm` | Session | `{entries: [{...}, ...]}` | 事务导入，返回成功/跳过/待分类统计 |
+
+### 6.8 账户管理端点（仅管理员）
+> 本组端点仅对 `is_admin = 1` 的用户开放；非管理员访问一律返回 **403 Forbidden**（区别于未登录的 401）。管理员身份由 `users.is_admin` 字段判定，非仅比对用户名。
+
+| 方法 | 路径 | 鉴权 | 请求体 / 参数 | 响应 |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/users` | Session + admin | 无 | 列出全部账户 `{users: [{id, username, is_admin, created_at}, ...]}` |
+| POST | `/api/users` | Session + admin | `{username, password}` | 创建账户（新账户 `is_admin=0`，自动播种默认账本 + webhook_token），返回 `{id, username}` |
+| DELETE | `/api/users/{id}` | Session + admin | 无 | 删除账户（级联删除其全部账本数据）；**拦截删除管理员账户**（`is_admin=1`）返回 400 |
+| POST | `/api/users/{id}/reset-password` | Session + admin | `{new_password}` | 管理员重置他人密码（无需旧密码），同步踢掉该用户全部会话 |
+
+**关键约束**：
+- **管理员不可自删 / 不可删管理员**：删除目标 `is_admin=1` 时拦截，防止系统失去唯一管理入口。
+- **重置密码即登出**：管理员重置某用户密码后，调 `DeleteUserSessions` 清掉该用户所有活动会话，强制其用新密码重登。
+- **创建账户复用播种逻辑**：bcrypt 哈希 + 随机 webhook_token + 默认账本，与 `seedAdmin` 一致（但 `is_admin=0`）。
+- **密码长度**：新建与重置均沿用 `minPasswordLen ≥ 6` 校验。
 
 ## 7. 非功能落地
 
@@ -432,3 +455,4 @@ func (s *Store) migrate() error {
 ---
 **版本说明**：
 - v1.0 (2026-07-05)：首版技术概要设计。定义整体架构、关键查询（递归 CTE 多级汇总 + 一级饼图 + 本级直接伪切片）、路由引擎（Go regexp 预编译缓存 + 深度优先排序 + 应用层溯源填充）、双轨鉴权（webhook_token + Session/JWT）、REST API 端点清单（auth/webhook/dashboard/entries/categories/import 六组）、非功能落地（东八区时间归一化舍秒 + WAL 并发 + decimal 精度 + PRAGMA 强制外键 + 部署配置与测试重点）。
+- v1.1 (2026-07-05)：补账户管理（仅管理员）。`users` 表加 `is_admin` 字段（默认 0，播种 admin 为 1）；新增 6.8 账户管理端点（GET/POST `/api/users`、DELETE `/api/users/{id}`、POST `/api/users/{id}/reset-password`）；非管理员 403；管理员不可自删/删管理员；重置密码后踢会话；`/api/auth/me` 响应加 `is_admin`。

@@ -763,6 +763,27 @@ func dbCheckHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// spaFileSystem wraps an fs.FS to provide a Fallback to 404.html when a file
+// is not found, enabling pretty 404 pages in the embedded frontend.
+type spaFileSystem struct {
+	fs fs.FS
+}
+
+func (s spaFileSystem) Open(name string) (fs.File, error) {
+	f, err := s.fs.Open(name)
+	if err == nil {
+		return f, nil
+	}
+	// If the file is not found, try returning 404.html from the root.
+	if os.IsNotExist(err) || strings.Contains(err.Error(), "not found") {
+		f404, err404 := s.fs.Open("404.html")
+		if err404 == nil {
+			return f404, nil
+		}
+	}
+	return nil, err
+}
+
 func main() {
 	// Listen address is configurable via flag or ADDR env var; defaults to :8080.
 	addr := flag.String("addr", "", "HTTP listen address, e.g. :8080")
@@ -813,7 +834,7 @@ func main() {
 	// staticFS is provided by the build-tagged files (embed_dist.go /
 	// embed_stub.go) so the server works with or without a built frontend.
 	if sub, err := fs.Sub(staticFS, staticRoot); err == nil {
-		mux.Handle("/", http.FileServer(http.FS(sub)))
+		mux.Handle("/", http.FileServer(http.FS(spaFileSystem{fs: sub})))
 	}
 
 	srv := &http.Server{

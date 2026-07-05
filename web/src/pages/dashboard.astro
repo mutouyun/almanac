@@ -46,6 +46,31 @@ const title = '看板 · Almanac';
       }
       .muted { color: #888; }
       #gate { color: #888; }
+      .pw-form { margin-top: 1rem; max-width: 20rem; }
+      .pw-form label { display: block; font-size: 0.85rem; margin: 0.6rem 0 0.3rem; }
+      .pw-form input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.55rem 0.7rem;
+        border: 1px solid #8884;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        background: Field;
+        color: FieldText;
+      }
+      .pw-form button {
+        margin-top: 0.9rem;
+        padding: 0.55rem 1rem;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+      }
+      .pw-form button:disabled { opacity: 0.6; cursor: default; }
+      .pw-msg { font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
+      .pw-msg.ok { color: #16a34a; }
+      .pw-msg.err { color: #dc2626; }
     </style>
   </head>
   <body>
@@ -65,6 +90,20 @@ const title = '看板 · Almanac';
           这是看板占位页。接下来的迭代会在这里填入账目明细、分类树管理、
           CSV 导入和汇总统计。
         </p>
+      </div>
+
+      <div class="card">
+        <strong>🔑 修改密码</strong>
+        <form class="pw-form" id="pw-form">
+          <label for="old">当前密码</label>
+          <input id="old" type="password" autocomplete="current-password" required />
+          <label for="new1">新密码（至少 6 位）</label>
+          <input id="new1" type="password" autocomplete="new-password" required />
+          <label for="new2">确认新密码</label>
+          <input id="new2" type="password" autocomplete="new-password" required />
+          <button type="submit" id="pw-submit">修改密码</button>
+          <p class="pw-msg" id="pw-msg"></p>
+        </form>
       </div>
     </div>
 
@@ -89,6 +128,55 @@ const title = '看板 · Almanac';
       document.getElementById('logout').addEventListener('click', async () => {
         await fetch('/api/logout', { method: 'POST' }).catch(() => {});
         window.location.href = '/login';
+      });
+
+      const pwForm = document.getElementById('pw-form');
+      const pwBtn = document.getElementById('pw-submit');
+      const pwMsg = document.getElementById('pw-msg');
+      pwForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        pwMsg.className = 'pw-msg';
+        pwMsg.textContent = '';
+        const old = document.getElementById('old').value;
+        const n1 = document.getElementById('new1').value;
+        const n2 = document.getElementById('new2').value;
+        if (n1 !== n2) {
+          pwMsg.className = 'pw-msg err';
+          pwMsg.textContent = '两次输入的新密码不一致';
+          return;
+        }
+        if (n1.length < 6) {
+          pwMsg.className = 'pw-msg err';
+          pwMsg.textContent = '新密码至少 6 位';
+          return;
+        }
+        pwBtn.disabled = true;
+        pwBtn.textContent = '提交中…';
+        try {
+          const res = await fetch('/api/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_password: old, new_password: n1 }),
+          });
+          if (res.ok) {
+            pwMsg.className = 'pw-msg ok';
+            pwMsg.textContent = '修改成功，即将跳转登录页…';
+            setTimeout(() => { window.location.href = '/login'; }, 1500);
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          pwMsg.className = 'pw-msg err';
+          pwMsg.textContent =
+            data.error === 'wrong old password' ? '当前密码错误'
+            : data.error === 'password too short' ? '新密码至少 6 位'
+            : '修改失败，请重试';
+        } catch (e) {
+          pwMsg.className = 'pw-msg err';
+          pwMsg.textContent = '无法连接服务器';
+        } finally {
+          pwBtn.disabled = false;
+          pwBtn.textContent = '修改密码';
+        }
       });
     </script>
   </body>

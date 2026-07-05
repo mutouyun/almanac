@@ -23,6 +23,9 @@ import (
 // ErrUserNotFound is returned when a username lookup finds no matching row.
 var ErrUserNotFound = errors.New("user not found")
 
+// ErrWrongPassword is returned when a supplied password does not match.
+var ErrWrongPassword = errors.New("wrong password")
+
 // User represents an application account. In the MVP every logged-in user is
 // effectively an administrator of their own ledger.
 type User struct {
@@ -226,6 +229,40 @@ WHERE s.token = ?`, token).Scan(
 func (s *Store) DeleteSession(token string) error {
 	if _, err := s.db.Exec("DELETE FROM sessions WHERE token = ?", token); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// ChangePassword verifies the user's current password and, on success,
+// replaces it with a new bcrypt hash. It returns ErrUserNotFound if the user
+// does not exist and ErrWrongPassword if the old password does not match.
+func (s *Store) ChangePassword(userID int64, oldPassword, newPassword string) error {
+	var hash string
+	err := s.db.QueryRow("SELECT password_hash FROM users WHERE id = ?", userID).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("query user: %w", err)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
+		return ErrWrongPassword
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	if _, err := s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(newHash), userID); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	return nil
+}
+
+// DeleteUserSessions removes all sessions for a user (e.g. after a password
+// change), forcing re-login everywhere.
+func (s *Store) DeleteUserSessions(userID int64) error {
+	if _, err := s.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+		return fmt.Errorf("delete user sessions: %w", err)
 	}
 	return nil
 }

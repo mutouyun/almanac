@@ -144,6 +144,75 @@ func whoamiHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// changePasswordRequest is the payload for POST /api/change-password.
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// minPasswordLen is the minimum accepted length for a new password.
+const minPasswordLen = 6
+
+func changePasswordHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+		// Authenticate via session cookie.
+		c, err := r.Cookie(sessionCookie)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		u, err := st.UserBySession(c.Value)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+
+		var req changePasswordRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request"})
+			return
+		}
+		if len(req.NewPassword) < minPasswordLen {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "password too short"})
+			return
+		}
+
+		err = st.ChangePassword(u.ID, req.OldPassword, req.NewPassword)
+		if err == store.ErrWrongPassword {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "wrong old password"})
+			return
+		}
+		if err != nil {
+			log.Printf("change password error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+			return
+		}
+
+		// Invalidate all sessions (force re-login) and clear the current cookie.
+		if err := st.DeleteUserSessions(u.ID); err != nil {
+			log.Printf("failed to clear sessions after password change: %v", err)
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:   sessionCookie,
+			Path:   "/",
+			MaxAge: -1,
+		})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp := healthResponse{
@@ -213,6 +282,7 @@ func main() {
 	mux.Handle("/api/login", loginHandler(st))
 	mux.Handle("/api/logout", logoutHandler(st))
 	mux.Handle("/api/whoami", whoamiHandler(st))
+	mux.Handle("/api/change-password", changePasswordHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

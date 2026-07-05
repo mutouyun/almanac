@@ -213,6 +213,67 @@ func changePasswordHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// currentUser resolves the authenticated user from the session cookie, or nil.
+func currentUser(st *store.Store, r *http.Request) *store.User {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return nil
+	}
+	u, err := st.UserBySession(c.Value)
+	if err != nil {
+		return nil
+	}
+	return u
+}
+
+// tokenResponse carries a webhook token plus the ingestion path, so the UI can
+// show a copy-paste-ready endpoint.
+type tokenResponse struct {
+	Token string `json:"token"`
+	Path  string `json:"path"`
+}
+
+func webhookTokenHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tokenResponse{Token: u.WebhookToken, Path: "/api/webhook/entry"})
+	}
+}
+
+func webhookTokenResetHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		token, err := st.RegenerateWebhookToken(u.ID)
+		if err != nil {
+			log.Printf("reset webhook token error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tokenResponse{Token: token, Path: "/api/webhook/entry"})
+	}
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp := healthResponse{
@@ -284,6 +345,8 @@ func main() {
 	mux.Handle("/api/whoami", whoamiHandler(st))
 	mux.Handle("/api/change-password", changePasswordHandler(st))
 	mux.Handle("/api/webhook/entry", webhookHandler(st))
+	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
+	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

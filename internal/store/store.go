@@ -419,6 +419,19 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return id, nil
 }
 
+// RegenerateWebhookToken issues a fresh webhook token for the user and returns
+// the new value. The old token immediately stops working.
+func (s *Store) RegenerateWebhookToken(userID int64) (string, error) {
+	token, err := randomToken(24)
+	if err != nil {
+		return "", fmt.Errorf("generate webhook token: %w", err)
+	}
+	if _, err := s.db.Exec("UPDATE users SET webhook_token = ? WHERE id = ?", token, userID); err != nil {
+		return "", fmt.Errorf("update webhook token: %w", err)
+	}
+	return token, nil
+}
+
 // Close closes the underlying database.
 func (s *Store) Close() error {
 	return s.db.Close()

@@ -71,6 +71,31 @@ const title = '看板 · Almanac';
       .pw-msg { font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
       .pw-msg.ok { color: #16a34a; }
       .pw-msg.err { color: #dc2626; }
+      .wh-row { margin-top: 0.9rem; }
+      .wh-label { font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; }
+      .wh-code {
+        font-family: ui-monospace, "Cascadia Code", monospace;
+        font-size: 0.85rem;
+        background: #8881;
+        border: 1px solid #8883;
+        border-radius: 8px;
+        padding: 0.5rem 0.7rem;
+        word-break: break-all;
+        user-select: all;
+      }
+      .wh-actions { margin-top: 0.9rem; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+      .wh-actions button {
+        padding: 0.45rem 0.9rem;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        border: 1px solid #8884;
+        background: transparent;
+        color: inherit;
+      }
+      .wh-actions .primary { border: none; background: #2563eb; color: #fff; }
+      .wh-msg { font-size: 0.8rem; min-height: 1.1em; margin-top: 0.5rem; color: #16a34a; }
+      .wh-msg.err { color: #dc2626; }
     </style>
   </head>
   <body>
@@ -90,6 +115,24 @@ const title = '看板 · Almanac';
           这是看板占位页。接下来的迭代会在这里填入账目明细、分类树管理、
           CSV 导入和汇总统计。
         </p>
+      </div>
+
+      <div class="card">
+        <strong>🔌 Webhook 接入</strong>
+        <p class="muted">iOS 快捷指令把账单 POST 到下方接口，请求头带上 token。Body 三要素：<code>date</code>（带时区 ISO 8601）、<code>type</code>（描述）、<code>amount</code>（支出为负、收入为正）。</p>
+        <div class="wh-row">
+          <div class="wh-label">接口地址（POST）</div>
+          <div class="wh-code" id="wh-url">…</div>
+        </div>
+        <div class="wh-row">
+          <div class="wh-label">请求头</div>
+          <div class="wh-code" id="wh-header">…</div>
+        </div>
+        <div class="wh-actions">
+          <button class="primary" id="wh-copy">复制 token</button>
+          <button id="wh-reset">重置 token</button>
+        </div>
+        <p class="wh-msg" id="wh-msg"></p>
       </div>
 
       <div class="card">
@@ -120,6 +163,7 @@ const title = '看板 · Almanac';
           document.getElementById('user').textContent = `${d.username} ·`;
           gate.hidden = true;
           app.hidden = false;
+          loadWebhookToken();
         })
         .catch(() => {
           window.location.href = '/login';
@@ -128,6 +172,54 @@ const title = '看板 · Almanac';
       document.getElementById('logout').addEventListener('click', async () => {
         await fetch('/api/logout', { method: 'POST' }).catch(() => {});
         window.location.href = '/login';
+      });
+
+      const whUrl = document.getElementById('wh-url');
+      const whHeader = document.getElementById('wh-header');
+      const whMsg = document.getElementById('wh-msg');
+      let currentToken = '';
+
+      function renderToken(data) {
+        currentToken = data.token;
+        whUrl.textContent = `${window.location.origin}${data.path}`;
+        whHeader.textContent = `X-Webhook-Token: ${data.token}`;
+      }
+
+      async function loadWebhookToken() {
+        try {
+          const res = await fetch('/api/webhook-token');
+          if (!res.ok) throw new Error('failed');
+          renderToken(await res.json());
+        } catch (e) {
+          whMsg.className = 'wh-msg err';
+          whMsg.textContent = '无法获取 token';
+        }
+      }
+
+      document.getElementById('wh-copy').addEventListener('click', async () => {
+        whMsg.className = 'wh-msg';
+        try {
+          await navigator.clipboard.writeText(currentToken);
+          whMsg.textContent = '✅ token 已复制到剪贴板';
+        } catch (e) {
+          whMsg.className = 'wh-msg err';
+          whMsg.textContent = '复制失败，请长按上方 token 手动复制';
+        }
+      });
+
+      document.getElementById('wh-reset').addEventListener('click', async () => {
+        if (!confirm('重置后旧 token 立即失效，iOS 快捷指令需同步更新。确定？')) return;
+        whMsg.className = 'wh-msg';
+        whMsg.textContent = '重置中…';
+        try {
+          const res = await fetch('/api/webhook-token/reset', { method: 'POST' });
+          if (!res.ok) throw new Error('failed');
+          renderToken(await res.json());
+          whMsg.textContent = '✅ token 已重置，请更新快捷指令';
+        } catch (e) {
+          whMsg.className = 'wh-msg err';
+          whMsg.textContent = '重置失败，请重试';
+        }
       });
 
       const pwForm = document.getElementById('pw-form');

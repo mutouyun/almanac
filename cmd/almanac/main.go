@@ -330,6 +330,73 @@ func entriesHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// updateEntryCategoryRequest is the body for PATCH /api/entries/{id}/category.
+// CategoryID is a pointer so an explicit null clears the category (unclassify),
+// while omitting it is treated the same as null.
+type updateEntryCategoryRequest struct {
+	CategoryID *int64 `json:"category_id"`
+}
+
+// entryItemHandler serves PATCH /api/entries/{id}/category: manually (re)assign
+// or clear an entry's category. Session-authenticated; scoped to the caller's
+// own entries.
+func entryItemHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+
+		// Path: /api/entries/{id}/category
+		rest := strings.TrimPrefix(r.URL.Path, "/api/entries/")
+		idStr, ok := strings.CutSuffix(rest, "/category")
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "not found"})
+			return
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid entry id"})
+			return
+		}
+		if r.Method != http.MethodPatch {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req updateEntryCategoryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+			return
+		}
+		if err := st.UpdateEntryCategory(u.ID, id, req.CategoryID); err != nil {
+			switch err {
+			case store.ErrEntryNotFound:
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "entry not found"})
+			case store.ErrCategoryNotFound:
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+			case store.ErrDirectionMismatch:
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "category direction does not match entry"})
+			default:
+				log.Printf("update entry category error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+			}
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}
+}
+
 // categoryRequest is the body for creating/updating a category.
 type categoryRequest struct {
 	ParentID  *int64 `json:"parent_id"`
@@ -709,6 +776,7 @@ func main() {
 	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 	mux.Handle("/api/entries", entriesHandler(st))
+	mux.Handle("/api/entries/", entryItemHandler(st))
 	mux.Handle("/api/categories", categoriesHandler(st))
 	mux.Handle("/api/categories/", categoryItemHandler(st))
 	mux.Handle("/api/users", usersHandler(st))

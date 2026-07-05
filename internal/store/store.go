@@ -43,6 +43,14 @@ var ErrMaxDepth = errors.New("category depth exceeds 5 levels")
 // with an uncompilable rule.
 var ErrInvalidRegex = errors.New("invalid regex pattern")
 
+// ErrEntryNotFound is returned when an entry lookup finds no matching row for
+// the given user.
+var ErrEntryNotFound = errors.New("entry not found")
+
+// ErrDirectionMismatch is returned when assigning a category whose direction
+// (income/expense) disagrees with the sign of the entry's amount.
+var ErrDirectionMismatch = errors.New("category direction does not match entry")
+
 // ErrUsernameTaken is returned when creating a user whose username already exists.
 var ErrUsernameTaken = errors.New("username already taken")
 
@@ -691,6 +699,67 @@ LIMIT ? OFFSET ?`, userID, limit, offset)
 		return nil, 0, fmt.Errorf("iterate entries: %w", err)
 	}
 	return entries, total, nil
+}
+
+// UpdateEntryCategory manually (re)assigns or clears the category of one of the
+// user's entries. Pass categoryID == nil to unclassify. When a category is
+// given it must belong to the same user and its direction must match the sign
+// of the entry's amount (expense category for a negative amount, income for a
+// positive one), otherwise ErrDirectionMismatch. The entry itself must belong
+// to the user, otherwise ErrEntryNotFound.
+func (s *Store) UpdateEntryCategory(userID, entryID int64, categoryID *int64) error {
+	// Confirm the entry exists and is owned by the user; get its amount sign.
+	var amountCents int64
+	err := s.db.QueryRow(
+		"SELECT amount_cents FROM ledger_entries WHERE id = ? AND user_id = ?",
+		entryID, userID,
+	).Scan(&amountCents)
+	if err == sql.ErrNoRows {
+		return ErrEntryNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup entry: %w", err)
+	}
+
+	if categoryID != nil {
+		// Confirm the category exists, is owned by the user, and matches
+		// the entry's direction.
+		var dir int
+		err := s.db.QueryRow(
+			"SELECT direction FROM categories WHERE id = ? AND user_id = ?",
+			*categoryID, userID,
+		).Scan(&dir)
+		if err == sql.ErrNoRows {
+			return ErrCategoryNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lookup category: %w", err)
+		}
+		wantDir := -1
+		if amountCents > 0 {
+			wantDir = 1
+		}
+		if dir != wantDir {
+			return ErrDirectionMismatch
+		}
+	}
+
+	var catVal any
+	if categoryID != nil {
+		catVal = *categoryID
+	}
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(
+		"UPDATE ledger_entries SET category_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+		catVal, now, entryID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update entry category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrEntryNotFound
+	}
+	return nil
 }
 
 // Category is one node in a user's category tree.

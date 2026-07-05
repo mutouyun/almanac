@@ -160,3 +160,99 @@ func TestZeroAmountUnclassified(t *testing.T) {
 		t.Fatalf("zero amount must be unclassified, got %d", got)
 	}
 }
+
+// mkentry inserts an entry for the user and returns its id.
+func mkentry(t *testing.T, s *Store, uid int64, cents int64, raw string) int64 {
+	t.Helper()
+	ledger, err := s.DefaultLedgerID(uid)
+	if err != nil {
+		t.Fatalf("default ledger: %v", err)
+	}
+	id, err := s.InsertEntry(Entry{
+		UserID:      uid,
+		LedgerID:    ledger,
+		AmountCents: cents,
+		RawType:     raw,
+		RecordTime:  "2026-07-05 12:00",
+		Source:      "manual",
+	})
+	if err != nil {
+		t.Fatalf("insert entry: %v", err)
+	}
+	return id
+}
+
+// entryCategory returns the category_id of an entry (0 = unclassified).
+func entryCategory(t *testing.T, s *Store, uid, entryID int64) int64 {
+	t.Helper()
+	rows, _, err := s.ListEntries(uid, 200, 0)
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	for _, e := range rows {
+		if e.ID == entryID {
+			if e.CategoryID == nil {
+				return 0
+			}
+			return *e.CategoryID
+		}
+	}
+	t.Fatalf("entry %d not found", entryID)
+	return 0
+}
+
+// TestUpdateEntryCategory: manual assign, clear, and the ownership/direction
+// guards.
+func TestUpdateEntryCategory(t *testing.T) {
+	s, uid := newTestStore(t)
+	expenseCat := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
+	incomeCat := mkcat(t, s, uid, nil, "工资", 1, 0, "")
+	entry := mkentry(t, s, uid, -3000, "unknown expense")
+
+	// Assign an expense category to an expense entry -> ok.
+	if err := s.UpdateEntryCategory(uid, entry, &expenseCat); err != nil {
+		t.Fatalf("assign expense category: %v", err)
+	}
+	if got := entryCategory(t, s, uid, entry); got != expenseCat {
+		t.Fatalf("expected category %d, got %d", expenseCat, got)
+	}
+
+	// Direction mismatch: income category on an expense entry -> rejected.
+	if err := s.UpdateEntryCategory(uid, entry, &incomeCat); err != ErrDirectionMismatch {
+		t.Fatalf("expected ErrDirectionMismatch, got %v", err)
+	}
+
+	// Clear (unclassify) with nil.
+	if err := s.UpdateEntryCategory(uid, entry, nil); err != nil {
+		t.Fatalf("clear category: %v", err)
+	}
+	if got := entryCategory(t, s, uid, entry); got != 0 {
+		t.Fatalf("expected unclassified after clear, got %d", got)
+	}
+
+	// Nonexistent category -> ErrCategoryNotFound.
+	bogus := int64(99999)
+	if err := s.UpdateEntryCategory(uid, entry, &bogus); err != ErrCategoryNotFound {
+		t.Fatalf("expected ErrCategoryNotFound, got %v", err)
+	}
+
+	// Nonexistent entry -> ErrEntryNotFound.
+	if err := s.UpdateEntryCategory(uid, 99999, &expenseCat); err != ErrEntryNotFound {
+		t.Fatalf("expected ErrEntryNotFound, got %v", err)
+	}
+}
+
+// TestUpdateEntryCategoryCrossUser: user B cannot touch user A's entry.
+func TestUpdateEntryCategoryCrossUser(t *testing.T) {
+	s, uidA := newTestStore(t)
+	bID, err := s.CreateUser("bob", "secret123")
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	entryA := mkentry(t, s, uidA, -100, "a's entry")
+	bCat := mkcat(t, s, bID, nil, "bob餐饮", -1, 0, "")
+	// Bob tries to reclassify Alice's entry -> not found (scoped by user_id).
+	if err := s.UpdateEntryCategory(bID, entryA, &bCat); err != ErrEntryNotFound {
+		t.Fatalf("cross-user must be ErrEntryNotFound, got %v", err)
+	}
+}

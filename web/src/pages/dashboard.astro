@@ -114,6 +114,22 @@ const title = '看板 · Almanac';
       .entry-time { font-size: 0.85rem; color: #888; white-space: nowrap; }
       .entry-desc { font-size: 0.95rem; }
       .entry-cat { font-size: 0.75rem; color: #888; margin-top: 0.15rem; }
+      .entry-cat-select {
+        font-size: 0.75rem;
+        color: #555;
+        margin-top: 0.2rem;
+        padding: 0.1rem 0.3rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #fff;
+        max-width: 12rem;
+      }
+      .entry-cat-select.unclassified {
+        color: #b45309;
+        border-color: #f59e0b;
+        background: #fffbeb;
+      }
+      .entry-cat-select:disabled { opacity: 0.5; }
       .entry-amount { font-size: 0.95rem; font-weight: 600; white-space: nowrap; }
       .entry-amount.expense { color: #dc2626; }
       .entry-amount.income { color: #16a34a; }
@@ -198,7 +214,7 @@ const title = '看板 · Almanac';
           gate.hidden = true;
           app.hidden = false;
           loadWebhookToken();
-          loadEntries();
+          loadCategories().then(loadEntries);
         })
         .catch(() => {
           window.location.href = '/login';
@@ -311,6 +327,32 @@ const title = '看板 · Almanac';
       const entriesList = document.getElementById('entries-list');
       const entriesError = document.getElementById('entries-error');
 
+      // Categories cached for the reclassify dropdowns, split by direction.
+      let catsExpense = [];
+      let catsIncome = [];
+
+      async function loadCategories() {
+        try {
+          const res = await fetch('/api/categories');
+          if (!res.ok) return;
+          const data = await res.json();
+          const cats = data.categories || [];
+          catsExpense = cats.filter(c => c.direction === -1);
+          catsIncome = cats.filter(c => c.direction === 1);
+        } catch (e) { /* dropdowns just stay empty on failure */ }
+      }
+
+      // Build the <option> list for an entry given its direction and current id.
+      function catOptions(isExpense, currentId) {
+        const list = isExpense ? catsExpense : catsIncome;
+        let opts = `<option value=""${!currentId ? ' selected' : ''}>未分类</option>`;
+        for (const c of list) {
+          const sel = c.id === currentId ? ' selected' : '';
+          opts += `<option value="${c.id}"${sel}>${escapeHTML(c.name)}</option>`;
+        }
+        return opts;
+      }
+
       async function loadEntries() {
         try {
           const res = await fetch('/api/entries?limit=20');
@@ -328,22 +370,55 @@ const title = '看板 · Almanac';
             const yuan = (Math.abs(cents) / 100).toFixed(2);
             const amtClass = isExpense ? 'expense' : 'income';
             const amtText = isExpense ? `-¥${yuan}` : `+¥${yuan}`;
-            const cat = e.category_name || '未分类';
+            const curId = e.category_id || 0;
+            const unclassified = curId ? '' : ' unclassified';
             return `<div class="entry-row">
               <div class="entry-time">${e.record_time}</div>
               <div>
                 <div class="entry-desc">${escapeHTML(e.raw_type)}</div>
-                <div class="entry-cat">${escapeHTML(cat)}</div>
+                <select class="entry-cat-select${unclassified}" data-entry-id="${e.id}">${catOptions(isExpense, curId)}</select>
               </div>
               <div class="entry-amount ${amtClass}">${amtText}</div>
             </div>`;
           }).join('');
           entriesList.innerHTML += `<div class="entries-total">共 ${data.total} 条记录</div>`;
           entriesList.hidden = false;
+          bindCategorySelects();
         } catch (e) {
           entriesLoading.hidden = true;
           entriesError.textContent = '加载失败，请刷新重试';
           entriesError.hidden = false;
+        }
+      }
+
+      // Wire each dropdown to PATCH the entry's category on change.
+      function bindCategorySelects() {
+        for (const sel of entriesList.querySelectorAll('.entry-cat-select')) {
+          sel.addEventListener('change', async () => {
+            const id = sel.dataset.entryId;
+            const val = sel.value;
+            const body = { category_id: val ? Number(val) : null };
+            const prev = sel.dataset.prev || '';
+            sel.disabled = true;
+            try {
+              const res = await fetch(`/api/entries/${id}/category`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              });
+              if (!res.ok) throw new Error('failed');
+              // Toggle the unclassified styling to match the new state.
+              sel.classList.toggle('unclassified', !val);
+              sel.dataset.prev = val;
+            } catch (e) {
+              sel.value = prev; // revert on failure
+              entriesError.textContent = '修改分类失败，请重试';
+              entriesError.hidden = false;
+            } finally {
+              sel.disabled = false;
+            }
+          });
+          sel.dataset.prev = sel.value;
         }
       }
 

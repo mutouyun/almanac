@@ -1,6 +1,6 @@
-# Almanac Ledger 数据模型设计文档 v2.2
+# Almanac Ledger 数据模型设计文档 v2.6
 
-> 上游依据：`docs/ledger_requirements.md` (v1.7)、`docs/ledger_interaction_design.md` (v1.2)
+> 上游依据：`docs/ledger_requirements.md` (v1.10)、`docs/ledger_interaction_design.md` (v1.4)
 > 本文从交互设计反推数据实体，定义表结构、约束、索引、触发器与关系。所有关键决策已落定（见第 6 节）。
 
 ## 1. 设计原则
@@ -105,6 +105,7 @@ erDiagram
 | `updated_at` | TEXT | NOT NULL | |
 
 - **叶子实时派生**：不存 `is_leaf`。叶子 = 无子节点（`NOT EXISTS`），仅用于展示。路由全员参与，不区分叶子。
+- **域界（Scope）= 用户级共享**（决策点 N）：`categories` 只挂 `user_id`，**不挂 `ledger_id`**。一个用户的全部账本共用同一棵分类树。即使将来升级多账本，分类体系仍为用户级共享，不随账本分裂。→ **切勿给 `categories` 加 `ledger_id`**（否则与本决策矛盾）。因此改分类名称/方向会波及该用户所有账本的历史归类，交互层需慎重。
 - **方向继承（DB 级不变式）**：由触发器强制校验子节点 `direction = 父.direction`（见 3.5），违反则 ABORT。属系统级致命不变式，测试最高优先级。
 - **删除策略**：`parent_id` 为 `ON DELETE RESTRICT`——禁止删除带子节点的父类，强制用户自下而上清理。
 - 索引：`(user_id, parent_id)`（树遍历 + 叶子判定）；`(user_id, sort_order)`（路由/展示排序）。
@@ -186,34 +187,35 @@ WITH RECURSIVE subtree(id) AS (
 SELECT COALESCE(SUM(e.amount_cents), 0) AS total_cents
 FROM ledger_entries e
 WHERE e.user_id = :uid
+  AND e.ledger_id = :ledger_id
   AND e.category_id IN (SELECT id FROM subtree);
 ```
 > 若只看“本级直接”（不含子孙）：`WHERE category_id = :category_id`。下钻时用“本级直接”伪切片 = 本节点子树总额 − 各子节点子树总额之和。
 
-### 4.2 路由引擎拉取规则（全员节点，深度优先）
+### 4.2 路由引擎拉取规则（同方向全员节点，深度优先）
 ```sql
 SELECT c.id, c.regex, c.level, c.sort_order FROM categories c
-WHERE c.user_id = :uid AND c.regex IS NOT NULL
-ORDER BY c.level DESC, c.sort_order ASC, c.id ASC;  -- 深度优先，同层拖拽序，跨子树 id 兑底
+WHERE c.user_id = :uid AND c.regex IS NOT NULL AND c.direction = :direction
+ORDER BY c.level DESC, c.sort_order ASC, c.id ASC;  -- 深度优先，同层拖拽序，跨子树 id 兑底；先按 amount 符号定方向
 ```
-应用层用 Go `regexp` 预编译并缓存正则（裸关键词自然成包含匹配），按上述顺序依次匹配 `raw_type`，命中即止。
+应用层先由 `amount` 符号确定 `direction`（支出=-1 / 收入=1），再拉取同方向正则；用 Go `regexp` 预编译并缓存（裸关键词自然成包含匹配），按上述顺序依次匹配 `raw_type`，命中即止。一笔支出不会去试匹配收入分类的正则，反之亦然。
 
 ### 4.3 月度收支统计
 ```sql
 -- 本月支出（取绝对值）
 SELECT -COALESCE(SUM(amount_cents), 0) AS expense_cents
 FROM ledger_entries
-WHERE user_id = :uid AND substr(record_time, 1, 7) = :month AND amount_cents < 0;
+WHERE user_id = :uid AND ledger_id = :ledger_id AND substr(record_time, 1, 7) = :month AND amount_cents < 0;
 
 -- 本月收入
 SELECT COALESCE(SUM(amount_cents), 0) AS income_cents
 FROM ledger_entries
-WHERE user_id = :uid AND substr(record_time, 1, 7) = :month AND amount_cents > 0;
+WHERE user_id = :uid AND ledger_id = :ledger_id AND substr(record_time, 1, 7) = :month AND amount_cents > 0;
 
 -- 结余（净值）
 SELECT COALESCE(SUM(amount_cents), 0) AS balance_cents
 FROM ledger_entries
-WHERE user_id = :uid AND substr(record_time, 1, 7) = :month;
+WHERE user_id = :uid AND ledger_id = :ledger_id AND substr(record_time, 1, 7) = :month;
 ```
 > `record_time` 为定长 ISO 文本，`substr(...,1,7)` 取 `YYYY-MM` 按月分组。
 
@@ -221,7 +223,7 @@ WHERE user_id = :uid AND substr(record_time, 1, 7) = :month;
 - **层级 ≤ 5**：新建/移动子树时在事务内重算并校验 `level`。
 - **`category_id` 可指任意节点**（方案 3）：不再强制叶子。下钻展示时前端需渲染“本级直接”伪切片以保证子项之和 = 父级总额。
 - **金额符号与分类方向一致**、**拒绝 `amount == 0`**、**元→分四舍五入**。
-- **时区归一化**：解析带偏移 ISO 8601 → 东八区墙钟。
+- **时区归一化**：解析带偏移 ISO 8601（如 `2026-07-05T14:30:00+08:00`）→ 东八区墙钟时间 `YYYY-MM-DD HH:mm`。**秒级精度直接截断（truncate）**，不四舍五入（避免 `14:30:45` 变 `14:31` 的诡异跳变）。
 
 ## 6. 决策点落定
 | 编号 | 决策点 | 最终决策 |
@@ -238,7 +240,8 @@ WHERE user_id = :uid AND substr(record_time, 1, 7) = :month;
 | M | 账目归属层级 | ✅ 可归任意节点（方案 3）；`priority` 字段并入 `sort_order` |
 | J | 外键级联 | ✅ parent RESTRICT / leaf SET NULL / user CASCADE；`PRAGMA foreign_keys=ON` |
 | K | 方向继承校验 | ✅ 触发器 DB 级强校验 |
-| L | 时区处理 | ✅ 带偏移 ISO 8601 入参，后端归一化东八区 |
+| L | 时区处理 | ✅ 带偏移 ISO 8601 入参，后端归一化东八区（舍秒 truncate） |
+| N | 分类树域界（Scope） | ✅ 用户级共享；`categories` 不挂 `ledger_id`，全账本共用一棵树 |
 
 ---
 **版本说明**：
@@ -247,3 +250,5 @@ WHERE user_id = :uid AND substr(record_time, 1, 7) = :month;
 - v2.2 (2026-07-05)：采纳方案 3（账目可挂任意节点）；`leaf_category_id → category_id`；正则全员可配、深度优先 + 同层 `sort_order` 拖拽（合并 `priority`）；路由查询去 `NOT EXISTS`；下钻需“本级直接”伪切片。
 - v2.3 (2026-07-05)：明确 CSV 去重语义为“与库中已有记录比对（record_time+raw_type+amount_cents）”，与交互 §6.2“防止重复导入”对齐，消除“仅批次内去重”歧义。
 - v2.4 (2026-07-05)：补两道防线——金额入参严禁 float64 接收（强制 json.Number 或字符串，源头防 IEEE 754 截断）；3.5 触发器增加多租户隔离校验（父节点必须属同一用户，堵跨租户嫁接越权）。
+- v2.5 (2026-07-05)：修路由与多账本一致性——4.2 路由拉取补 `direction` 过滤（先按 amount 符号定方向，不跨方向试匹）；4.1/4.3 查询补 `ledger_id` 过滤（前瞻多账本）；第 5 节时区归一化明确“主动舍秒 truncate”。
+- v2.6 (2026-07-05)：定栁分类树域界为**用户级共享**（决策点 N）：`categories` 不挂 `ledger_id`，全账本共用一棵分类树；3.3 补域界说明，消除多账本归属盲区。

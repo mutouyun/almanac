@@ -77,6 +77,11 @@ const title = '登录 · Almanac';
     </form>
 
     <script>
+      // If already logged in, skip the form and go straight to the dashboard.
+      fetch('/api/whoami').then((r) => {
+        if (r.ok) window.location.replace('/dashboard');
+      }).catch(() => {});
+
       const form = document.getElementById('login-form');
       const btn = document.getElementById('submit');
       const err = document.getElementById('err');

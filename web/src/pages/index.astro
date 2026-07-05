@@ -1,7 +1,7 @@
 ---
-// Almanac MVP landing page.
-// Static HTML served by the Go backend (embedded via go:embed).
-// A small client script calls /health to prove the frontend can talk to the API.
+// Almanac entry portal.
+// Pure client-side router: probes /api/whoami and forwards to /dashboard when
+// logged in, otherwise to /login. Served as static HTML embedded via go:embed.
 const title = 'Almanac';
 ---
 
@@ -15,44 +15,38 @@ const title = 'Almanac';
       :root { color-scheme: light dark; }
       body {
         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        max-width: 42rem;
-        margin: 4rem auto;
-        padding: 0 1.5rem;
-        line-height: 1.6;
+        display: flex;
+        min-height: 100vh;
+        margin: 0;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 0.75rem;
+        color: #888;
       }
-      h1 { font-size: 2rem; margin-bottom: 0.25rem; }
-      .subtitle { color: #888; margin-top: 0; }
-      .card {
-        border: 1px solid #8883;
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        margin-top: 2rem;
-      }
-      .status { font-family: ui-monospace, "Cascadia Code", monospace; }
-      .ok { color: #16a34a; }
-      .err { color: #dc2626; }
+      .brand { font-size: 1.5rem; color: inherit; }
+      .hint { font-size: 0.9rem; }
+      .fallback { display: none; }
+      .fallback a { color: #2563eb; text-decoration: none; }
     </style>
   </head>
   <body>
-    <h1>📖 Almanac</h1>
-    <p class="subtitle">自托管个人平台 · 博客 / 日记 / 记账本</p>
-
-    <div class="card">
-      <strong>后端状态</strong>
-      <p class="status" id="health">检测中… <span aria-hidden="true">⏳</span></p>
-    </div>
+    <div class="brand">📖 Almanac</div>
+    <p class="hint" id="hint">正在进入…</p>
+    <p class="fallback" id="fallback">
+      <a href="/login">前往登录</a>
+    </p>
 
     <script>
-      const el = document.getElementById('health');
-      fetch('/health')
-        .then((r) => r.json())
-        .then((d) => {
-          el.className = 'status ok';
-          el.textContent = `✅ ${d.service} · ${d.status} · ${d.time}`;
+      // Probe session state, then forward. Fall back to a manual link if the
+      // probe fails (e.g. backend unreachable).
+      fetch('/api/whoami')
+        .then((r) => {
+          window.location.replace(r.ok ? '/dashboard' : '/login');
         })
-        .catch((e) => {
-          el.className = 'status err';
-          el.textContent = `❌ 无法连接后端: ${e}`;
+        .catch(() => {
+          document.getElementById('hint').textContent = '无法连接服务器';
+          document.getElementById('fallback').style.display = 'block';
         });
     </script>
   </body>

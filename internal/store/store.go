@@ -26,6 +26,17 @@ var ErrUserNotFound = errors.New("user not found")
 // ErrWrongPassword is returned when a supplied password does not match.
 var ErrWrongPassword = errors.New("wrong password")
 
+// ErrCategoryHasChildren is returned when deleting a category that still has
+// child categories (parent_id ON DELETE RESTRICT).
+var ErrCategoryHasChildren = errors.New("category has children")
+
+// ErrCategoryNotFound is returned when a category lookup finds no matching row
+// for the given user.
+var ErrCategoryNotFound = errors.New("category not found")
+
+// ErrMaxDepth is returned when creating a category would exceed level 5.
+var ErrMaxDepth = errors.New("category depth exceeds 5 levels")
+
 // User represents an application account. In the MVP every logged-in user is
 // effectively an administrator of their own ledger.
 type User struct {
@@ -514,6 +525,134 @@ LIMIT ? OFFSET ?`, userID, limit, offset)
 		return nil, 0, fmt.Errorf("iterate entries: %w", err)
 	}
 	return entries, total, nil
+}
+
+// Category is one node in a user's category tree.
+type Category struct {
+	ID        int64  `json:"id"`
+	ParentID  *int64 `json:"parent_id"`
+	Name      string `json:"name"`
+	Direction int    `json:"direction"` // 1 income / -1 expense
+	Level     int    `json:"level"`
+	Regex     string `json:"regex"`
+	SortOrder int    `json:"sort_order"`
+}
+
+// ListCategories returns all of the user's categories ordered for tree
+// rendering (by level, then sort_order, then id).
+func (s *Store) ListCategories(userID int64) ([]Category, error) {
+	rows, err := s.db.Query(`
+SELECT id, parent_id, name, direction, level, COALESCE(regex, ''), sort_order
+FROM categories
+WHERE user_id = ?
+ORDER BY level ASC, sort_order ASC, id ASC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list categories: %w", err)
+	}
+	defer rows.Close()
+
+	cats := make([]Category, 0, 16)
+	for rows.Next() {
+		var c Category
+		if err := rows.Scan(&c.ID, &c.ParentID, &c.Name, &c.Direction, &c.Level, &c.Regex, &c.SortOrder); err != nil {
+			return nil, fmt.Errorf("scan category: %w", err)
+		}
+		cats = append(cats, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate categories: %w", err)
+	}
+	return cats, nil
+}
+
+// CreateCategory inserts a new category. level is derived from the parent:
+// root nodes are level 1; a child is parent.level+1 (rejected past 5). When
+// parentID is set, direction is forced to match the parent's (DB triggers also
+// enforce this and same-user ownership).
+func (s *Store) CreateCategory(userID int64, parentID *int64, name string, direction, sortOrder int, regex string) (int64, error) {
+	level := 1
+	if parentID != nil {
+		var pLevel, pDir int
+		err := s.db.QueryRow(
+			"SELECT level, direction FROM categories WHERE id = ? AND user_id = ?",
+			*parentID, userID,
+		).Scan(&pLevel, &pDir)
+		if err == sql.ErrNoRows {
+			return 0, ErrCategoryNotFound
+		}
+		if err != nil {
+			return 0, fmt.Errorf("lookup parent category: %w", err)
+		}
+		if pLevel >= 5 {
+			return 0, ErrMaxDepth
+		}
+		level = pLevel + 1
+		direction = pDir // inherit
+	}
+
+	var regexVal any
+	if regex != "" {
+		regexVal = regex
+	}
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(`
+INSERT INTO categories (user_id, parent_id, name, direction, level, regex, sort_order, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, parentID, name, direction, level, regexVal, sortOrder, now, now)
+	if err != nil {
+		return 0, fmt.Errorf("insert category: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("get category id: %w", err)
+	}
+	return id, nil
+}
+
+// UpdateCategory changes the mutable fields (name, regex, sort_order) of a
+// user's category. direction/parent_id/level are immutable here by design.
+func (s *Store) UpdateCategory(userID, id int64, name string, sortOrder int, regex string) error {
+	var regexVal any
+	if regex != "" {
+		regexVal = regex
+	}
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(`
+UPDATE categories SET name = ?, regex = ?, sort_order = ?, updated_at = ?
+WHERE id = ? AND user_id = ?`,
+		name, regexVal, sortOrder, now, id, userID)
+	if err != nil {
+		return fmt.Errorf("update category: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// DeleteCategory removes a leaf category. If the category still has children
+// it returns ErrCategoryHasChildren (parent_id is ON DELETE RESTRICT).
+func (s *Store) DeleteCategory(userID, id int64) error {
+	var childCount int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM categories WHERE parent_id = ? AND user_id = ?",
+		id, userID,
+	).Scan(&childCount); err != nil {
+		return fmt.Errorf("count children: %w", err)
+	}
+	if childCount > 0 {
+		return ErrCategoryHasChildren
+	}
+	res, err := s.db.Exec("DELETE FROM categories WHERE id = ? AND user_id = ?", id, userID)
+	if err != nil {
+		return fmt.Errorf("delete category: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
 }
 
 // RegenerateWebhookToken issues a fresh webhook token for the user and returns

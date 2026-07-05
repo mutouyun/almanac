@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mutouyun/almanac/internal/store"
@@ -328,6 +329,148 @@ func entriesHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// categoryRequest is the body for creating/updating a category.
+type categoryRequest struct {
+	ParentID  *int64 `json:"parent_id"`
+	Name      string `json:"name"`
+	Direction int    `json:"direction"`  // 1 income / -1 expense (ignored on update, inherited when parent set)
+	Regex     string `json:"regex"`
+	SortOrder int    `json:"sort_order"`
+}
+
+// categoriesHandler serves GET (list) and POST (create) on /api/categories.
+func categoriesHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			cats, err := st.ListCategories(u.ID)
+			if err != nil {
+				log.Printf("list categories error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"categories": cats})
+
+		case http.MethodPost:
+			var req categoryRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+				return
+			}
+			if req.Name == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "name is required"})
+				return
+			}
+			if req.ParentID == nil && req.Direction != 1 && req.Direction != -1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "direction must be 1 or -1 for a root category"})
+				return
+			}
+			id, err := st.CreateCategory(u.ID, req.ParentID, req.Name, req.Direction, req.SortOrder, req.Regex)
+			if err != nil {
+				switch err {
+				case store.ErrCategoryNotFound:
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "parent category not found"})
+				case store.ErrMaxDepth:
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "category depth exceeds 5 levels"})
+				default:
+					log.Printf("create category error: %v", err)
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				}
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id})
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// categoryItemHandler serves PUT (update) and DELETE on /api/categories/{id}.
+func categoryItemHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/categories/")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid category id"})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodPut:
+			var req categoryRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+				return
+			}
+			if req.Name == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "name is required"})
+				return
+			}
+			if err := st.UpdateCategory(u.ID, id, req.Name, req.SortOrder, req.Regex); err != nil {
+				if err == store.ErrCategoryNotFound {
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+					return
+				}
+				log.Printf("update category error: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+
+		case http.MethodDelete:
+			if err := st.DeleteCategory(u.ID, id); err != nil {
+				switch err {
+				case store.ErrCategoryHasChildren:
+					w.WriteHeader(http.StatusConflict)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "category has children"})
+				case store.ErrCategoryNotFound:
+					w.WriteHeader(http.StatusNotFound)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+				default:
+					log.Printf("delete category error: %v", err)
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+				}
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp := healthResponse{
@@ -402,6 +545,8 @@ func main() {
 	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 	mux.Handle("/api/entries", entriesHandler(st))
+	mux.Handle("/api/categories", categoriesHandler(st))
+	mux.Handle("/api/categories/", categoryItemHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

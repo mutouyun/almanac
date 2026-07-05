@@ -1,0 +1,284 @@
+---
+// Almanac category tree management page.
+// Client-side guard via /api/whoami; CRUD against /api/categories.
+const title = '分类管理 · Almanac';
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        max-width: 48rem;
+        margin: 3rem auto;
+        padding: 0 1.5rem;
+        line-height: 1.6;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        border-bottom: 1px solid #8883;
+        padding-bottom: 1rem;
+      }
+      h1 { font-size: 1.6rem; margin: 0; }
+      a { color: #2563eb; text-decoration: none; }
+      .card {
+        border: 1px solid #8883;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-top: 2rem;
+      }
+      .muted { color: #888; }
+      #gate { color: #888; }
+      .tree { margin-top: 1rem; }
+      .cat-node {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.5rem 0;
+        border-top: 1px solid #8882;
+      }
+      .cat-node:first-child { border-top: none; }
+      .cat-name { font-weight: 500; }
+      .cat-badge {
+        font-size: 0.7rem;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid #8884;
+      }
+      .cat-badge.income { color: #16a34a; border-color: #16a34a55; }
+      .cat-badge.expense { color: #dc2626; border-color: #dc262655; }
+      .cat-regex {
+        font-family: ui-monospace, "Cascadia Code", monospace;
+        font-size: 0.78rem;
+        color: #888;
+      }
+      .cat-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+      .cat-actions button {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid #8884;
+        background: transparent;
+        color: inherit;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .cat-empty { color: #888; margin-top: 1rem; }
+      form.add-form { margin-top: 1.5rem; display: grid; gap: 0.6rem; }
+      form.add-form label { font-size: 0.8rem; color: #888; }
+      form.add-form input, form.add-form select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.5rem 0.7rem;
+        border: 1px solid #8884;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        background: Field;
+        color: FieldText;
+      }
+      form.add-form button {
+        justify-self: start;
+        padding: 0.55rem 1.1rem;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+      }
+      .msg { font-size: 0.85rem; min-height: 1.2em; }
+      .msg.ok { color: #16a34a; }
+      .msg.err { color: #dc2626; }
+    </style>
+  </head>
+  <body>
+    <div id="gate">加载中…</div>
+    <div id="app" hidden>
+      <header>
+        <h1>🗂️ 分类管理</h1>
+        <a href="/dashboard">← 返回看板</a>
+      </header>
+
+      <div class="card">
+        <strong>分类树</strong>
+        <p class="muted">正则填裸关键词即可（如 <code>瑞幸</code>），命中即包含匹配；需精确匹配再手写 <code>^…$</code>。方向随父分类继承。</p>
+        <div class="tree" id="tree"></div>
+        <div class="cat-empty" id="tree-empty" hidden>还没有分类，用下面的表单创建第一个。</div>
+      </div>
+
+      <div class="card">
+        <strong>➕ 新建分类</strong>
+        <form class="add-form" id="add-form">
+          <div>
+            <label for="c-name">名称</label>
+            <input id="c-name" type="text" required placeholder="如：餐饮" />
+          </div>
+          <div>
+            <label for="c-parent">父分类（留空为根分类）</label>
+            <select id="c-parent"></select>
+          </div>
+          <div id="dir-wrap">
+            <label for="c-dir">方向（根分类必选，子分类继承父级）</label>
+            <select id="c-dir">
+              <option value="-1">支出</option>
+              <option value="1">收入</option>
+            </select>
+          </div>
+          <div>
+            <label for="c-regex">匹配正则（可选，裸关键词）</label>
+            <input id="c-regex" type="text" placeholder="如：瑞幸|星巴克" />
+          </div>
+          <button type="submit" id="add-btn">创建</button>
+          <p class="msg" id="add-msg"></p>
+        </form>
+      </div>
+    </div>
+    <script>
+      const gate = document.getElementById('gate');
+      const app = document.getElementById('app');
+      const tree = document.getElementById('tree');
+      const treeEmpty = document.getElementById('tree-empty');
+      const addForm = document.getElementById('add-form');
+      const addMsg = document.getElementById('add-msg');
+
+      let categories = [];
+
+      fetch('/api/whoami')
+        .then((r) => {
+          if (!r.ok) throw new Error('unauthorized');
+          return r.json();
+        })
+        .then(() => {
+          gate.hidden = true;
+          app.hidden = false;
+          loadCategories();
+        })
+        .catch(() => {
+          window.location.href = '/login';
+        });
+
+      async function loadCategories() {
+        try {
+          const res = await fetch('/api/categories');
+          if (!res.ok) throw new Error('failed');
+          const data = await res.json();
+          categories = data.categories || [];
+          renderTree();
+          updateParentSelect();
+        } catch (e) {
+          tree.innerHTML = '<div class="msg err">加载失败</div>';
+        }
+      }
+
+      function renderTree() {
+        if (categories.length === 0) {
+          tree.innerHTML = '';
+          treeEmpty.hidden = false;
+          return;
+        }
+        treeEmpty.hidden = true;
+        const html = categories.map(c => {
+          const indent = (c.level - 1) * 1.5;
+          const dirClass = c.direction === 1 ? 'income' : 'expense';
+          const dirText = c.direction === 1 ? '收入' : '支出';
+          const regex = c.regex ? `<span class="cat-regex">${escapeHTML(c.regex)}</span>` : '';
+          return `<div class="cat-node" style="padding-left:${indent}rem;">
+            <span class="cat-name">${escapeHTML(c.name)}</span>
+            <span class="cat-badge ${dirClass}">${dirText}</span>
+            ${regex}
+            <div class="cat-actions">
+              <button onclick="editCategory(${c.id})">改</button>
+              <button onclick="deleteCategory(${c.id})">删</button>
+            </div>
+          </div>`;
+        }).join('');
+        tree.innerHTML = html;
+      }
+
+      function updateParentSelect() {
+        const sel = document.getElementById('c-parent');
+        sel.innerHTML = '<option value="">（无，作为根分类）</option>' +
+          categories.map(c => {
+            const indent = ' '.repeat((c.level - 1) * 2);
+            return `<option value="${c.id}">${indent}${escapeHTML(c.name)}</option>`;
+          }).join('');
+      }
+
+      document.getElementById('c-parent').addEventListener('change', (e) => {
+        const dirWrap = document.getElementById('dir-wrap');
+        dirWrap.hidden = e.target.value !== '';
+      });
+
+      addForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        addMsg.className = 'msg';
+        addMsg.textContent = '';
+        const name = document.getElementById('c-name').value.trim();
+        const parentVal = document.getElementById('c-parent').value;
+        const parentID = parentVal ? parseInt(parentVal, 10) : null;
+        const direction = parentID ? 0 : parseInt(document.getElementById('c-dir').value, 10);
+        const regex = document.getElementById('c-regex').value.trim();
+        const body = { name, parent_id: parentID, direction, regex: regex || '', sort_order: 0 };
+        try {
+          const res = await fetch('/api/categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'failed');
+          }
+          addMsg.className = 'msg ok';
+          addMsg.textContent = '✅ 创建成功';
+          addForm.reset();
+          setTimeout(() => { addMsg.textContent = ''; }, 2000);
+          loadCategories();
+        } catch (err) {
+          addMsg.className = 'msg err';
+          addMsg.textContent = err.message;
+        }
+      });
+
+      window.editCategory = function(id) {
+        const c = categories.find(x => x.id === id);
+        if (!c) return;
+        const newName = prompt('修改名称：', c.name);
+        if (!newName || newName === c.name) return;
+        fetch(`/api/categories/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName, regex: c.regex, sort_order: c.sort_order }),
+        })
+          .then(r => r.ok ? loadCategories() : Promise.reject())
+          .catch(() => alert('修改失败'));
+      };
+
+      window.deleteCategory = function(id) {
+        const c = categories.find(x => x.id === id);
+        if (!c) return;
+        if (!confirm(`确定删除分类「${c.name}」？（带子分类的无法删除）`)) return;
+        fetch(`/api/categories/${id}`, { method: 'DELETE' })
+          .then(r => {
+            if (r.status === 409) {
+              alert('该分类还有子分类，请先删除子节点');
+              return Promise.reject();
+            }
+            return r.ok ? loadCategories() : Promise.reject();
+          })
+          .catch(() => {});
+      };
+
+      function escapeHTML(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
+    </script>
+  </body>
+</html>

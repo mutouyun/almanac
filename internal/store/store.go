@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,6 +215,44 @@ END;`
 	}
 	if err := s.migrateAmountAbs(); err != nil {
 		return err
+	}
+	if err := s.migrateSoftDelete(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateSoftDelete adds the ledger_entries.deleted_at column on databases
+// created before soft-delete existed. A non-NULL value marks the row as
+// deleted; all list/summary queries filter on `deleted_at IS NULL`. Idempotent:
+// a no-op once the column is present.
+func (s *Store) migrateSoftDelete() error {
+	rows, err := s.db.Query("PRAGMA table_info(ledger_entries)")
+	if err != nil {
+		return fmt.Errorf("inspect ledger_entries columns: %w", err)
+	}
+	defer rows.Close()
+	hasCol := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan column info: %w", err)
+		}
+		if name == "deleted_at" {
+			hasCol = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate column info: %w", err)
+	}
+	if hasCol {
+		return nil
+	}
+	if _, err := s.db.Exec("ALTER TABLE ledger_entries ADD COLUMN deleted_at TEXT"); err != nil {
+		return fmt.Errorf("add deleted_at column: %w", err)
 	}
 	return nil
 }
@@ -628,14 +667,14 @@ func (s *Store) DefaultLedgerID(userID int64) (int64, error) {
 
 // Entry represents one ledger record for insertion.
 type Entry struct {
-	UserID     int64
-	LedgerID   int64
-	CategoryID *int64 // nil = unclassified
+	UserID      int64
+	LedgerID    int64
+	CategoryID  *int64 // nil = unclassified
 	AmountCents int64
-	RawType    string
-	RecordTime string // "YYYY-MM-DD HH:mm"
-	Note       string
-	Source     string // webhook / manual / csv
+	RawType     string
+	RecordTime  string // "YYYY-MM-DD HH:mm"
+	Note        string
+	Source      string // webhook / manual / csv
 }
 
 // InsertEntry inserts one ledger entry and returns its new id.
@@ -670,16 +709,16 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 // category; it is 0 for an unclassified entry ("待分类", no direction). Amounts
 // are stored unsigned (absolute cents); direction is NOT carried by the sign.
 type EntryRow struct {
-	ID           int64   `json:"id"`
-	AmountCents  int64   `json:"amount_cents"`
-	RawType      string  `json:"raw_type"`
-	RecordTime   string  `json:"record_time"`
-	Note         string  `json:"note"`
-	Source       string  `json:"source"`
-	CategoryID   *int64  `json:"category_id"`
-	CategoryName string  `json:"category_name"`
-	CategoryPath string  `json:"category_path"`
-	Direction    int     `json:"direction"` // 1 income / -1 expense / 0 unclassified
+	ID           int64  `json:"id"`
+	AmountCents  int64  `json:"amount_cents"`
+	RawType      string `json:"raw_type"`
+	RecordTime   string `json:"record_time"`
+	Note         string `json:"note"`
+	Source       string `json:"source"`
+	CategoryID   *int64 `json:"category_id"`
+	CategoryName string `json:"category_name"`
+	CategoryPath string `json:"category_path"`
+	Direction    int    `json:"direction"` // 1 income / -1 expense / 0 unclassified
 }
 
 // ListEntries returns a page of the user's ledger entries, newest first
@@ -695,7 +734,7 @@ func (s *Store) ListEntries(userID int64, limit, offset int) ([]EntryRow, int, e
 
 	var total int
 	if err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM ledger_entries WHERE user_id = ?", userID,
+		"SELECT COUNT(*) FROM ledger_entries WHERE user_id = ? AND deleted_at IS NULL", userID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count entries: %w", err)
 	}
@@ -706,7 +745,7 @@ SELECT e.id, e.amount_cents, e.raw_type, e.record_time,
        COALESCE(c.direction, 0)
 FROM ledger_entries e
 LEFT JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = ?
+WHERE e.user_id = ? AND e.deleted_at IS NULL
 ORDER BY e.record_time DESC, e.id DESC
 LIMIT ? OFFSET ?`, userID, limit, offset)
 	if err != nil {
@@ -750,7 +789,7 @@ func (s *Store) UpdateEntryCategory(userID, entryID int64, categoryID *int64) er
 	// Confirm the entry exists and is owned by the user.
 	var amountCents int64
 	err := s.db.QueryRow(
-		"SELECT amount_cents FROM ledger_entries WHERE id = ? AND user_id = ?",
+		"SELECT amount_cents FROM ledger_entries WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
 		entryID, userID,
 	).Scan(&amountCents)
 	if err == sql.ErrNoRows {
@@ -782,11 +821,138 @@ func (s *Store) UpdateEntryCategory(userID, entryID int64, categoryID *int64) er
 	}
 	now := time.Now().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		"UPDATE ledger_entries SET category_id = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+		"UPDATE ledger_entries SET category_id = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
 		catVal, now, entryID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("update entry category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrEntryNotFound
+	}
+	return nil
+}
+
+// ManualEntryInput carries the fields for creating/editing a manual entry.
+// AmountCents must be > 0 (unsigned); direction is derived from CategoryID.
+// CategoryID nil means unclassified. RawType is the short summary/type label.
+type ManualEntryInput struct {
+	CategoryID  *int64
+	AmountCents int64
+	RawType     string
+	RecordTime  string // "YYYY-MM-DD HH:mm"
+	Note        string
+}
+
+// ErrInvalidAmount is returned when a manual entry amount is not a positive
+// integer number of cents.
+var ErrInvalidAmount = errors.New("amount must be a positive number of cents")
+
+// ErrInvalidEntry is returned when a manual entry is missing required fields
+// (e.g. an empty raw_type/summary or record_time).
+var ErrInvalidEntry = errors.New("entry is missing required fields")
+
+// validateManualInput enforces the shared create/update invariants and, when a
+// category is given, confirms it belongs to the user (returns ErrCategoryNotFound).
+func (s *Store) validateManualInput(userID int64, in ManualEntryInput) error {
+	if in.AmountCents <= 0 {
+		return ErrInvalidAmount
+	}
+	if strings.TrimSpace(in.RawType) == "" || strings.TrimSpace(in.RecordTime) == "" {
+		return ErrInvalidEntry
+	}
+	if in.CategoryID != nil {
+		var dummy int
+		err := s.db.QueryRow(
+			"SELECT 1 FROM categories WHERE id = ? AND user_id = ?",
+			*in.CategoryID, userID,
+		).Scan(&dummy)
+		if err == sql.ErrNoRows {
+			return ErrCategoryNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lookup category: %w", err)
+		}
+	}
+	return nil
+}
+
+// CreateManualEntry inserts a user-entered entry into the user's default ledger
+// with source='manual'. Amount is stored unsigned; direction is derived from
+// the chosen category (nil = unclassified). Returns the new entry id.
+func (s *Store) CreateManualEntry(userID int64, in ManualEntryInput) (int64, error) {
+	if err := s.validateManualInput(userID, in); err != nil {
+		return 0, err
+	}
+	ledgerID, err := s.DefaultLedgerID(userID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve default ledger: %w", err)
+	}
+	return s.InsertEntry(Entry{
+		UserID:      userID,
+		LedgerID:    ledgerID,
+		CategoryID:  in.CategoryID,
+		AmountCents: in.AmountCents,
+		RawType:     in.RawType,
+		RecordTime:  in.RecordTime,
+		Note:        in.Note,
+		Source:      "manual",
+	})
+}
+
+// UpdateEntry edits all mutable fields (amount, summary, time, note, category)
+// of one of the user's non-deleted entries. Direction is derived from the new
+// category; amounts stay unsigned. The entry must belong to the user, else
+// ErrEntryNotFound; a given category must belong to the user, else
+// ErrCategoryNotFound.
+func (s *Store) UpdateEntry(userID, entryID int64, in ManualEntryInput) error {
+	if err := s.validateManualInput(userID, in); err != nil {
+		return err
+	}
+	var exists int
+	err := s.db.QueryRow(
+		"SELECT 1 FROM ledger_entries WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+		entryID, userID,
+	).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return ErrEntryNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lookup entry: %w", err)
+	}
+	var catVal, noteVal any
+	if in.CategoryID != nil {
+		catVal = *in.CategoryID
+	}
+	if in.Note != "" {
+		noteVal = in.Note
+	}
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(`
+UPDATE ledger_entries
+SET category_id = ?, amount_cents = ?, raw_type = ?, record_time = ?, note = ?, updated_at = ?
+WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		catVal, in.AmountCents, in.RawType, in.RecordTime, noteVal, now, entryID, userID)
+	if err != nil {
+		return fmt.Errorf("update entry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrEntryNotFound
+	}
+	return nil
+}
+
+// SoftDeleteEntry marks one of the user's entries as deleted by stamping
+// deleted_at. Already-deleted or non-owned entries yield ErrEntryNotFound.
+// The row is retained (recoverable) and excluded from all list/summary queries.
+func (s *Store) SoftDeleteEntry(userID, entryID int64) error {
+	now := time.Now().Format(time.RFC3339)
+	res, err := s.db.Exec(
+		"UPDATE ledger_entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+		now, now, entryID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("soft delete entry: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrEntryNotFound

@@ -285,14 +285,52 @@ type entriesResponse struct {
 	Offset  int              `json:"offset"`
 }
 
-// entriesHandler serves the current user's ledger entries, newest first, with
-// limit/offset pagination. Requires a valid session cookie.
+// manualEntryRequest is the body for POST /api/entries (create) and PUT
+// /api/entries/{id} (edit). Amount is json.Number (never float64) so we reuse
+// parseAmountToCents; the stored value is unsigned cents (absolute magnitude).
+// Direction is NOT sent by the client: it is derived from the chosen category.
+// CategoryID nil/omitted means "待分类" (unclassified).
+type manualEntryRequest struct {
+	Amount     json.Number `json:"amount"`      // yuan, unsigned magnitude
+	RawType    string      `json:"raw_type"`    // short summary/type label
+	RecordTime string      `json:"record_time"` // free-form time, normalized server-side
+	Note       string      `json:"note"`
+	CategoryID *int64      `json:"category_id"`
+}
+
+// parseManualEntry validates and normalizes a manual entry request into a
+// store.ManualEntryInput. It maps amount/time errors to a client message.
+func parseManualEntry(req manualEntryRequest) (store.ManualEntryInput, string) {
+	cents, err := parseAmountToCents(req.Amount.String())
+	if err == errZeroAmount {
+		return store.ManualEntryInput{}, "amount must not be zero"
+	}
+	if err != nil {
+		return store.ManualEntryInput{}, "invalid amount"
+	}
+	if cents < 0 {
+		cents = -cents // store unsigned; ignore any legacy sign
+	}
+	recordTime, err := normalizeRecordTime(req.RecordTime)
+	if err != nil {
+		return store.ManualEntryInput{}, "invalid time"
+	}
+	if strings.TrimSpace(req.RawType) == "" {
+		return store.ManualEntryInput{}, "summary is required"
+	}
+	return store.ManualEntryInput{
+		CategoryID:  req.CategoryID,
+		AmountCents: cents,
+		RawType:     strings.TrimSpace(req.RawType),
+		RecordTime:  recordTime,
+		Note:        strings.TrimSpace(req.Note),
+	}, ""
+}
+
+// entriesHandler serves GET (paginated list) and POST (create manual entry) on
+// /api/entries. Requires a valid session cookie.
 func entriesHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		u := currentUser(st, r)
 		if u == nil {
@@ -300,34 +338,81 @@ func entriesHandler(st *store.Store) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
 			return
 		}
-
-		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				limit = n
-			}
+		switch r.Method {
+		case http.MethodGet:
+			entriesListHandler(st, w, r, u)
+		case http.MethodPost:
+			entriesCreateHandler(st, w, r, u)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-		offset := 0
-		if v := r.URL.Query().Get("offset"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil {
-				offset = n
-			}
-		}
+	}
+}
 
-		entries, total, err := st.ListEntries(u.ID, limit, offset)
-		if err != nil {
-			log.Printf("list entries error: %v", err)
+// entriesCreateHandler handles POST /api/entries: create a manual entry.
+func entriesCreateHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User) {
+	var req manualEntryRequest
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	if err := dec.Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+		return
+	}
+	in, msg := parseManualEntry(req)
+	if msg != "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: msg})
+		return
+	}
+	id, err := st.CreateManualEntry(u.ID, in)
+	if err != nil {
+		switch err {
+		case store.ErrCategoryNotFound:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+		case store.ErrInvalidAmount, store.ErrInvalidEntry:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+		default:
+			log.Printf("create manual entry error: %v", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
-			return
 		}
-		_ = json.NewEncoder(w).Encode(entriesResponse{
-			Entries: entries,
-			Total:   total,
-			Limit:   limit,
-			Offset:  offset,
-		})
+		return
 	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id})
+}
+
+// entriesListHandler handles GET /api/entries: paginated list, newest first.
+func entriesListHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User) {
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	offset := 0
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			offset = n
+		}
+	}
+
+	entries, total, err := st.ListEntries(u.ID, limit, offset)
+	if err != nil {
+		log.Printf("list entries error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(entriesResponse{
+		Entries: entries,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	})
 }
 
 // currentMonthKey returns the current Asia/Shanghai month as "YYYY-MM". It
@@ -424,9 +509,9 @@ type updateEntryCategoryRequest struct {
 	CategoryID *int64 `json:"category_id"`
 }
 
-// entryItemHandler serves PATCH /api/entries/{id}/category: manually (re)assign
-// or clear an entry's category. Session-authenticated; scoped to the caller's
-// own entries.
+// entryItemHandler routes PATCH /api/entries/{id}/category (change category),
+// PUT /api/entries/{id} (full-field edit), and DELETE /api/entries/{id} (soft
+// delete). Session-authenticated; scoped to the caller's own entries.
 func entryItemHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -437,55 +522,128 @@ func entryItemHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// Path: /api/entries/{id}/category
 		rest := strings.TrimPrefix(r.URL.Path, "/api/entries/")
-		idStr, ok := strings.CutSuffix(rest, "/category")
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "not found"})
+		// PATCH /api/entries/{id}/category routes separately.
+		if idStr, ok := strings.CutSuffix(rest, "/category"); ok {
+			if r.Method != http.MethodPatch {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err != nil || id <= 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid entry id"})
+				return
+			}
+			entryChangeCategoryHandler(st, w, r, u, id)
 			return
 		}
-		id, err := strconv.ParseInt(idStr, 10, 64)
+
+		// Otherwise it's PUT /api/entries/{id} or DELETE /api/entries/{id}.
+		id, err := strconv.ParseInt(rest, 10, 64)
 		if err != nil || id <= 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid entry id"})
 			return
 		}
-		if r.Method != http.MethodPatch {
+		switch r.Method {
+		case http.MethodPut:
+			entryEditHandler(st, w, r, u, id)
+		case http.MethodDelete:
+			entryDeleteHandler(st, w, r, u, id)
+		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
 		}
-
-		var req updateEntryCategoryRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
-			return
-		}
-		if err := st.UpdateEntryCategory(u.ID, id, req.CategoryID); err != nil {
-			switch err {
-			case store.ErrEntryNotFound:
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(errorResponse{Error: "entry not found"})
-			case store.ErrCategoryNotFound:
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
-			default:
-				log.Printf("update entry category error: %v", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
-			}
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 	}
+}
+
+// entryChangeCategoryHandler handles PATCH /api/entries/{id}/category: manually
+// (re)assign or clear (unclassify) an entry's category.
+func entryChangeCategoryHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User, id int64) {
+	var req updateEntryCategoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+		return
+	}
+	if err := st.UpdateEntryCategory(u.ID, id, req.CategoryID); err != nil {
+		switch err {
+		case store.ErrEntryNotFound:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "entry not found"})
+		case store.ErrCategoryNotFound:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+		default:
+			log.Printf("update entry category error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		}
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+}
+
+// entryEditHandler handles PUT /api/entries/{id}: full-field edit (amount,
+// summary, time, note, category).
+func entryEditHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User, id int64) {
+	var req manualEntryRequest
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	if err := dec.Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+		return
+	}
+	in, msg := parseManualEntry(req)
+	if msg != "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: msg})
+		return
+	}
+	if err := st.UpdateEntry(u.ID, id, in); err != nil {
+		switch err {
+		case store.ErrEntryNotFound:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "entry not found"})
+		case store.ErrCategoryNotFound:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+		case store.ErrInvalidAmount, store.ErrInvalidEntry:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+		default:
+			log.Printf("update entry error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		}
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+}
+
+// entryDeleteHandler handles DELETE /api/entries/{id}: soft delete (mark
+// deleted_at, hide from lists/summaries).
+func entryDeleteHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User, id int64) {
+	if err := st.SoftDeleteEntry(u.ID, id); err != nil {
+		if err == store.ErrEntryNotFound {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "entry not found"})
+			return
+		}
+		log.Printf("soft delete entry error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 }
 
 // categoryRequest is the body for creating/updating a category.
 type categoryRequest struct {
 	ParentID  *int64 `json:"parent_id"`
 	Name      string `json:"name"`
-	Direction int    `json:"direction"`  // 1 income / -1 expense (ignored on update, inherited when parent set)
+	Direction int    `json:"direction"` // 1 income / -1 expense (ignored on update, inherited when parent set)
 	Regex     string `json:"regex"`
 	SortOrder int    `json:"sort_order"`
 	Move      bool   `json:"move"` // when true on PUT, reparent to ParentID (nil = root)

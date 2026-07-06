@@ -61,7 +61,7 @@ func (s *Store) SummaryByMonth(userID int64, month string) (MonthSummary, error)
 SELECT COALESCE(c.direction, 0) AS dir, COALESCE(SUM(e.amount_cents), 0), COUNT(*)
 FROM ledger_entries e
 LEFT JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = ? AND e.record_time >= ? AND e.record_time < ?
+WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.record_time >= ? AND e.record_time < ?
 GROUP BY dir`, userID, start, end)
 	if err != nil {
 		return MonthSummary{}, fmt.Errorf("summary current: %w", err)
@@ -94,7 +94,7 @@ SELECT
   COALESCE(SUM(CASE WHEN c.direction = -1 THEN e.amount_cents ELSE 0 END), 0)
 FROM ledger_entries e
 LEFT JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = ? AND e.record_time >= ? AND e.record_time < ?`,
+WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.record_time >= ? AND e.record_time < ?`,
 		userID, prevStart, start,
 	).Scan(&sum.PrevIncomeCents, &sum.PrevExpenseCents); err != nil {
 		return MonthSummary{}, fmt.Errorf("summary prev: %w", err)
@@ -124,7 +124,7 @@ SELECT root.id, root.name, root.direction, SUM(e.amount_cents) AS total
 FROM ledger_entries e
 JOIN roots r ON r.id = e.category_id
 JOIN categories root ON root.id = r.root_id
-WHERE e.user_id = ? AND root.direction = ?
+WHERE e.user_id = ? AND e.deleted_at IS NULL AND root.direction = ?
   AND e.record_time >= ? AND e.record_time < ?
 GROUP BY root.id, root.name, root.direction
 ORDER BY total DESC, root.id ASC`, userID, userID, direction, start, end)

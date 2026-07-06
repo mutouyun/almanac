@@ -117,6 +117,38 @@ func TestSummaryByCategory(t *testing.T) {
 	}
 }
 
+// TestSummaryByCategoryRollsUpToRoot verifies that per-category totals roll a
+// deep entry up to its top-level (root) category, so the breakdown chart shows
+// "which top-level bucket" the money went to, not the leaf category.
+func TestSummaryByCategoryRollsUpToRoot(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")      // root
+	drink := mkcat(t, s, uid, &food, "饮品", -1, 0, "")   // child
+	coffee := mkcat(t, s, uid, &drink, "咖啡", -1, 0, "") // grandchild
+	transit := mkcat(t, s, uid, nil, "交通", -1, 0, "")   // another root
+
+	mkentryAt(t, s, uid, 3000, "2026-07-05 12:00", &coffee) // rolls up to 餐饮
+	mkentryAt(t, s, uid, 2000, "2026-07-06 12:00", &drink)  // rolls up to 餐饮
+	mkentryAt(t, s, uid, 1000, "2026-07-07 08:00", &transit)
+
+	slices, err := s.SummaryByCategory(uid, "2026-07", -1)
+	if err != nil {
+		t.Fatalf("summary by category: %v", err)
+	}
+	if len(slices) != 2 {
+		t.Fatalf("want 2 root categories, got %d", len(slices))
+	}
+	if slices[0].Name != "餐饮" || slices[0].TotalCents != 5000 {
+		t.Errorf("slice[0]: want 餐饮/5000, got %s/%d", slices[0].Name, slices[0].TotalCents)
+	}
+	if slices[0].CategoryID != food {
+		t.Errorf("slice[0] id: want root %d (餐饮), got %d", food, slices[0].CategoryID)
+	}
+	if slices[1].Name != "交通" || slices[1].TotalCents != 1000 {
+		t.Errorf("slice[1]: want 交通/1000, got %s/%d", slices[1].Name, slices[1].TotalCents)
+	}
+}
+
 // TestMonthRange verifies the [start, end) string bounds for a YYYY-MM key,
 // including December rolling into the next year.
 func TestMonthRange(t *testing.T) {

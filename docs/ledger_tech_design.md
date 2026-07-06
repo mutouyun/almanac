@@ -1,4 +1,4 @@
-# Almanac Ledger 技术概要设计文档 v1.2
+# Almanac Ledger 技术概要设计文档 v1.3
 
 > 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.5)、`docs/ledger_data_model.md` (v2.9)
 > 本文承接需求、交互与数据模型，定义系统的技术实现骨架：整体架构、关键查询、路由引擎、鉴权安全、API 端点与非功能落地。**不重复数据模型的表结构定义**（见数据模型文档），仅引用并补充实现细节。
@@ -130,7 +130,7 @@ WHERE e.user_id = :uid
 ```
 
 ### 3.2 一级分类占比（看板饼图，一次查询出全一级汇总）
-避免对每个一级分类各跑一次 3.1，用递归 CTE 一次性把每个账目映射到它所属的「一级根」，再 GROUP BY 汇总。
+避免对每个一级分类各跑一次 3.1，用递归 CTE 一次性把每个账目映射到它所属的「一级根」，再 GROUP BY 汇总。饼图按**方向**（收/支）分别拉取：一次请求只出一个方向的根分类占比。
 ```sql
 WITH RECURSIVE roots(id, root_id) AS (
     -- 每个根节点自身
@@ -140,17 +140,17 @@ WITH RECURSIVE roots(id, root_id) AS (
     SELECT c.id, r.root_id FROM categories c
     JOIN roots r ON c.parent_id = r.id
 )
-SELECT r.root_id,
-       (SELECT name FROM categories WHERE id = r.root_id) AS root_name,
-       COALESCE(SUM(e.amount_cents), 0) AS total_cents
+SELECT root.id, root.name, root.direction,
+       SUM(e.amount_cents) AS total_cents
 FROM ledger_entries e
-JOIN roots r ON e.category_id = r.id
-WHERE e.user_id = :uid AND e.ledger_id = :ledger_id
-  AND substr(e.record_time, 1, 7) = :month
-GROUP BY r.root_id
-ORDER BY total_cents;
+JOIN roots r ON r.id = e.category_id
+JOIN categories root ON root.id = r.root_id
+WHERE e.user_id = :uid AND root.direction = :direction
+  AND e.record_time >= :start AND e.record_time < :end
+GROUP BY root.id, root.name, root.direction
+ORDER BY total_cents DESC, root.id ASC;
 ```
-> 待分类（`category_id IS NULL`）不在 JOIN 结果内，需单独用 §3.4 统计条数并在看板提示。
+> 待分类（`category_id IS NULL`）不在 JOIN 结果内，需单独用 §3.4 统计条数并在看板提示。方向不可变沿整棵子树成立，故用根分类的 `direction` 过滤即代表整棵子树。月份用左闭右开的墙钟字符串范围（`:start`=`YYYY-MM-01 00:00`、`:end`=次月同刻）而非 `substr`，可吃到 `(user_id, record_time)` 索引。MVP 阶段单账本，暂跨账本聚合（不带 `ledger_id` 过滤）；引入多账本时再收敛。
 
 ### 3.3 「本级直接」伪切片（下钻时保证子项之和 = 父级总额）
 因账目可直挂非叶节点，某节点「只属于本级、不含子孙」的金额 = 本节点子树总额 − 各直接子节点子树总额之和。实现上：
@@ -164,22 +164,28 @@ WHERE user_id = :uid AND ledger_id = :ledger_id AND category_id = :category_id;
 
 ### 3.4 月度收支卡片与待分类计数
 ```sql
--- 本月支出 / 收入 / 结余：方向由归类分类派生（金额恒为正，JOIN categories）
-SELECT
-  COALESCE(SUM(CASE WHEN c.direction = -1 THEN e.amount_cents END), 0) AS expense_cents,
-  COALESCE(SUM(CASE WHEN c.direction = 1  THEN e.amount_cents END), 0) AS income_cents,
-  COALESCE(SUM(e.amount_cents * c.direction), 0)                       AS balance_cents
-FROM ledger_entries e JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = :uid AND e.ledger_id = :ledger_id
-  AND substr(e.record_time, 1, 7) = :month;
+-- 本月支出 / 收入 / 结余 + 待分类金额和条数：方向由归类分类派生（金额恒为正，LEFT JOIN categories 后按 direction 分档）
+-- 待分类（c.direction IS NULL）归入 dir=0 档，既不计收也不计支
+SELECT COALESCE(c.direction, 0) AS dir,
+       COALESCE(SUM(e.amount_cents), 0) AS total_cents,
+       COUNT(*) AS cnt
+FROM ledger_entries e
+LEFT JOIN categories c ON c.id = e.category_id
+WHERE e.user_id = :uid
+  AND e.record_time >= :start AND e.record_time < :end
+GROUP BY dir;
+-- 应用层按 dir 分流：1→income、0-1→expense、0→unclassified（cents+cnt）；balance = income - expense。
 
--- 待分类计数（category_id IS NULL，无方向、不计收支）
-SELECT COUNT(*) AS unclassified_cnt
-FROM ledger_entries
-WHERE user_id = :uid AND ledger_id = :ledger_id
-  AND substr(record_time, 1, 7) = :month AND category_id IS NULL;
+-- 上月收/支（供卡片“相比上月 ±X%”环比）
+SELECT
+  COALESCE(SUM(CASE WHEN c.direction = 1  THEN e.amount_cents ELSE 0 END), 0) AS prev_income,
+  COALESCE(SUM(CASE WHEN c.direction = -1 THEN e.amount_cents ELSE 0 END), 0) AS prev_expense
+FROM ledger_entries e
+LEFT JOIN categories c ON c.id = e.category_id
+WHERE e.user_id = :uid
+  AND e.record_time >= :prev_start AND e.record_time < :start;
 ```
-> 方向全靠 `c.direction`，金额恒为正。收支汇总用 `JOIN`（非 LEFT JOIN）天然排除待分类；待分类计数单独一查。前者命中 `(user_id, category_id)` 索引，后者命中 `(user_id, record_time)`。
+> 方向全靠 `c.direction`，金额恒为正。本月汇总用 `LEFT JOIN` 一次分组，应用层按方向分流并把 `dir=0` 归为待分类（不计收支、单独报告条数）。月份边界用左闭右开墙钟字符串范围（`:start`/`:end`/`:prev_start`）而非 `substr`，命中 `(user_id, record_time)` 索引；跨年（12月→次年 1 月）由应用层 `time.AddDate` 处理。
 
 ### 3.5 账目明细（时光轴倒序 + 分类路径回填）
 列表页按 `record_time DESC` 取分页，分类路径（`餐饮>饮品>咖啡`）不在 SQL 里拼，见 §4.3 溯源填充。
@@ -336,7 +342,10 @@ flowchart TD
 ### 6.4 看板端点
 | 方法 | 路径 | 鉴权 | 参数 | 响应 |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/dashboard` | Session | `?month=YYYY-MM` | 月度卡片 + 待分类数 + 一级饼图数据 |
+| GET | `/api/summary` | Session | `?month=YYYY-MM`（缺省当月 CST） | 月度卡片：`{month, income_cents, expense_cents, balance_cents, unclassified_cents, unclassified_count, prev_income_cents, prev_expense_cents}` |
+| GET | `/api/summary/by-category` | Session | `?month=YYYY-MM&direction=-1`（缺省支出） | 一级根分类饼图：`{month, direction, slices:[{category_id, name, direction, total_cents}]}`（按 total 降序，已卷到根） |
+
+> 拆为两个端点（而非单个 `/api/dashboard`）：卡片与饼图职责分离，饼图切换方向（收/支）时只重拉 by-category。卡片携上月同项（`prev_*`）供前端算真实环比。
 
 ### 6.5 账目端点
 | 方法 | 路径 | 鉴权 | 参数 / 请求体 | 响应 |
@@ -464,3 +473,4 @@ func (s *Store) migrate() error {
 - v1.0 (2026-07-05)：首版技术概要设计。定义整体架构、关键查询（递归 CTE 多级汇总 + 一级饼图 + 本级直接伪切片）、路由引擎（Go regexp 预编译缓存 + 深度优先排序 + 应用层溯源填充）、双轨鉴权（webhook_token + Session/JWT）、REST API 端点清单（auth/webhook/dashboard/entries/categories/import 六组）、非功能落地（东八区时间归一化舍秒 + WAL 并发 + decimal 精度 + PRAGMA 强制外键 + 部署配置与测试重点）。
 - v1.1 (2026-07-05)：补账户管理（仅管理员）。`users` 表加 `is_admin` 字段（默认 0，播种 admin 为 1）；新增 6.8 账户管理端点（GET/POST `/api/users`、DELETE `/api/users/{id}`、POST `/api/users/{id}/reset-password`）；非管理员 403；管理员不可自删/删管理员；重置密码后踢会话；`/api/auth/me` 响应加 `is_admin`。
 - v1.2 (2026-07-06)：**方案 B 重构——方向由归类分类派生、金额改存无符号绝对值**（追需求 v1.14 / 数据模型 v2.9）。时序图去掉 `direction=sign(amount)`；§2 schema 要点改无符号 + 方向来自分类；3.4 月度汇总改 `JOIN categories` 按 `c.direction` 分收支（待分类自然排除，单独计数）；4.1 流程图/4.2 优先级去掉“按符号定方向/方向隔离”改为跨方向统一匹配；4.3 缓存由收/支双切片改为单个跨方向切片（元素带 `direction`）；§7.7 金额精度用例改无符号，新增“方向派生与待分类汇总”测试点。
+- v1.3 (2026-07-06)：**汇总卡片 + 数据可视化落地对齐**（一期实现）。§3.2 饼图 SQL 加方向过滤（`root.direction = :direction`，收/支分别拉取），月份过滤由 `substr` 改左闭右开墙钟范围（吃 `(user_id, record_time)` 索引），标注 MVP 暂跨账本聚合；§3.4 卡片改 `LEFT JOIN` 一次分组按 `dir` 分流（`dir=0` 归待分类），新增上月收/支查询供“相比上月 ±X%”环比，月份用范围+`AddDate` 跨年；§6.4 看板端点由单个 `/api/dashboard` 拆为 `GET /api/summary`（卡片，含 `prev_*`）+ `GET /api/summary/by-category`（一级根饼图，卷到根）。代码：新增 `internal/store/summary.go`（`SummaryByMonth`/`SummaryByCategory` + `monthRange`，递归 CTE 卷根）与 5 个单测；`main.go` 挂两 handler；`dashboard.astro` 卡片接真值 + 月份选择器 + 待分类提醒条 + Chart.js 支出甜甜圈。

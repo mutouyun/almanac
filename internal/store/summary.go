@@ -102,22 +102,32 @@ WHERE e.user_id = ? AND e.record_time >= ? AND e.record_time < ?`,
 	return sum, nil
 }
 
-// SummaryByCategory returns per-category totals for the given direction and
-// month, sorted by total descending. Only classified entries whose category
-// matches the requested direction are included.
+// SummaryByCategory returns per-root-category totals for the given direction and
+// month, sorted by total descending. Every entry is rolled up to its top-level
+// (root) category via a recursive CTE, so a deep entry (e.g. 餐饮>饮品>咖啡)
+// contributes to its root bucket (餐饮). Only classified entries whose root
+// category matches the requested direction are included; direction is immutable
+// down a tree so a root's direction applies to its whole subtree.
 func (s *Store) SummaryByCategory(userID int64, month string, direction int) ([]CategorySlice, error) {
 	start, end, _, err := monthRange(month)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.Query(`
-SELECT c.id, c.name, c.direction, SUM(e.amount_cents) AS total
+WITH RECURSIVE roots(id, root_id) AS (
+    SELECT id, id FROM categories WHERE user_id = ? AND parent_id IS NULL
+    UNION ALL
+    SELECT c.id, r.root_id FROM categories c
+    JOIN roots r ON c.parent_id = r.id
+)
+SELECT root.id, root.name, root.direction, SUM(e.amount_cents) AS total
 FROM ledger_entries e
-JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = ? AND c.direction = ?
+JOIN roots r ON r.id = e.category_id
+JOIN categories root ON root.id = r.root_id
+WHERE e.user_id = ? AND root.direction = ?
   AND e.record_time >= ? AND e.record_time < ?
-GROUP BY c.id, c.name, c.direction
-ORDER BY total DESC, c.id ASC`, userID, direction, start, end)
+GROUP BY root.id, root.name, root.direction
+ORDER BY total DESC, root.id ASC`, userID, userID, direction, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("summary by category: %w", err)
 	}

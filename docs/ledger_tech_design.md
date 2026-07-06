@@ -1,6 +1,6 @@
-# Almanac Ledger 技术概要设计文档 v1.1
+# Almanac Ledger 技术概要设计文档 v1.2
 
-> 上游依据：`docs/ledger_requirements.md` (v1.12)、`docs/ledger_interaction_design.md` (v1.5)、`docs/ledger_data_model.md` (v2.7)
+> 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.5)、`docs/ledger_data_model.md` (v2.9)
 > 本文承接需求、交互与数据模型，定义系统的技术实现骨架：整体架构、关键查询、路由引擎、鉴权安全、API 端点与非功能落地。**不重复数据模型的表结构定义**（见数据模型文档），仅引用并补充实现细节。
 
 ## 1. 整体架构
@@ -86,8 +86,8 @@ sequenceDiagram
     end
     H->>H: json.Number 解析 amount → decimal → 整数分（拦截 0）
     H->>H: date 归一化东八区墙钟 (舍秒) YYYY-MM-DD HH:mm
-    H->>R: 分类(user_id, direction=sign(amount), raw_type)
-    R->>C: 取该用户已编译正则(按方向)
+    H->>R: 分类(user_id, raw_type)  // 方向不再预定，由命中分类决定
+    R->>C: 取该用户已编译正则（全部分类，收/支合并）
     alt 缓存未命中
         C->>D: 拉取 categories(regex,level,sort_order)
         C->>C: regexp.Compile 并缓存
@@ -100,10 +100,10 @@ sequenceDiagram
 
 ## 2. 数据模型（Schema）引用
 
-表结构、约束、索引、触发器、决策记录**以 `docs/ledger_data_model.md` (v2.7) 为唯一权威**，本文不复制。实现要点提醒：
+表结构、约束、索引、触发器、决策记录**以 `docs/ledger_data_model.md` (v2.9) 为唯一权威**，本文不复制。实现要点提醒：
 
 - 四张业务表：`users` / `ledgers` / `categories`（邻接表自引用树）/ `ledger_entries`。
-- 金额 `amount_cents` 为带符号整数分，方向即符号，无 direction 字段。
+- 金额 `amount_cents` 为**无符号绝对值**整数分（恒为正）；**方向由归类分类 `direction` 派生**，账目表无 direction 字段；待分类（`category_id IS NULL`）无方向。
 - `categories` 只挂 `user_id`（用户级共享树），**不挂 `ledger_id`**。
 - 叶子由 `NOT EXISTS` 实时派生，不存 `is_leaf`。
 - 触发器兜底：方向继承、方向不可变、同租户校验。
@@ -164,17 +164,22 @@ WHERE user_id = :uid AND ledger_id = :ledger_id AND category_id = :category_id;
 
 ### 3.4 月度收支卡片与待分类计数
 ```sql
--- 本月支出（绝对值）/ 收入 / 结余：符号即方向
+-- 本月支出 / 收入 / 结余：方向由归类分类派生（金额恒为正，JOIN categories）
 SELECT
-  -COALESCE(SUM(CASE WHEN amount_cents < 0 THEN amount_cents END), 0) AS expense_cents,
-   COALESCE(SUM(CASE WHEN amount_cents > 0 THEN amount_cents END), 0) AS income_cents,
-   COALESCE(SUM(amount_cents), 0)                                     AS balance_cents,
-   SUM(CASE WHEN category_id IS NULL THEN 1 ELSE 0 END)               AS unclassified_cnt
+  COALESCE(SUM(CASE WHEN c.direction = -1 THEN e.amount_cents END), 0) AS expense_cents,
+  COALESCE(SUM(CASE WHEN c.direction = 1  THEN e.amount_cents END), 0) AS income_cents,
+  COALESCE(SUM(e.amount_cents * c.direction), 0)                       AS balance_cents
+FROM ledger_entries e JOIN categories c ON c.id = e.category_id
+WHERE e.user_id = :uid AND e.ledger_id = :ledger_id
+  AND substr(e.record_time, 1, 7) = :month;
+
+-- 待分类计数（category_id IS NULL，无方向、不计收支）
+SELECT COUNT(*) AS unclassified_cnt
 FROM ledger_entries
 WHERE user_id = :uid AND ledger_id = :ledger_id
-  AND substr(record_time, 1, 7) = :month;
+  AND substr(record_time, 1, 7) = :month AND category_id IS NULL;
 ```
-> 一次扫描出四个看板指标，命中 `(user_id, record_time)` 索引。
+> 方向全靠 `c.direction`，金额恒为正。收支汇总用 `JOIN`（非 LEFT JOIN）天然排除待分类；待分类计数单独一查。前者命中 `(user_id, category_id)` 索引，后者命中 `(user_id, record_time)`。
 
 ### 3.5 账目明细（时光轴倒序 + 分类路径回填）
 列表页按 `record_time DESC` 取分页，分类路径（`餐饮>饮品>咖啡`）不在 SQL 里拼，见 §4.3 溯源填充。
@@ -190,20 +195,19 @@ LIMIT :limit OFFSET :offset;
 
 ## 4. 路由引擎设计
 
-路由引擎是记账链路的大脑：给定一笔（方向 + 原始描述），在用户的分类树中找出应归属的节点。
+路由引擎是记账链路的大脑：给定一笔（原始描述），在用户的分类树中找出应归属的节点，**命中分类的方向即为该账目的收支方向**（方向不再由金额符号预定）。
 
 ### 4.1 算法流程
 ```mermaid
 flowchart TD
-    A[入参: user_id, amount, raw_type] --> B[direction = sign amount_cents]
-    B --> C[从缓存取该用户 direction 方向的\n已编译正则规则集合]
+    A[入参: user_id, raw_type] --> C[从缓存取该用户全部分类的\n已编译正则规则集合（收/支合并）]
     C --> D{缓存命中?}
-    D -- 否 --> E[Store 拉 categories\nregex/level/sort_order\n按 level DESC, sort_order ASC, id ASC]
+    D -- 否 --> E[Store 拉 categories\nregex/direction/level/sort_order\n按 level DESC, sort_order ASC, id ASC]
     E --> F[regexp.Compile 逐条\n构建有序切片并缓存]
     D -- 是 --> G
     F --> G[按序遍历规则]
     G --> H{MatchString raw_type?}
-    H -- 命中 --> I[返回该 category_id\n命中即止]
+    H -- 命中 --> I[返回该 category_id\n方向=该分类 direction，命中即止]
     H -- 未命中 --> J{还有下一条?}
     J -- 是 --> G
     J -- 否 --> K[返回 NULL\n待分类]
@@ -214,13 +218,13 @@ flowchart TD
 1. **层级深优先**（`level DESC`）：越具体的子分类越先匹配，子命中即不再看父。
 2. **同层拖拽序**（`sort_order ASC`）：同一父下由用户拖拽决定先后，也是展示序。
 3. **跨子树同深度兜底**（`id ASC`）：保证结果确定、可复现。
-4. **方向隔离**：先由 `amount` 符号定 `direction`，只在同方向规则内匹配，支出不会误命中收入分类。
+4. **跨方向统一匹配**：方向不再由 `amount` 符号预定，路由在收/支合并后的全部分类中匹配，命中分类的 `direction` 即为账目方向。
 5. **命中即止**：第一条 `MatchString` 为真的规则即为归属，不继续。
 
 ### 4.3 Go regexp 预编译缓存策略
 每次 Webhook 都重新 `regexp.Compile` 会浪费 CPU 且无谓。采用**按用户维度的编译缓存**：
 
-- **结构**：`map[userID]*compiledRuleSet`，`compiledRuleSet` 含两个有序切片（支出向、收入向），每个元素是 `{categoryID int; re *regexp.Regexp; level, sortOrder int}`，已按 §4.2 排好序。
+- **结构**：`map[userID]*compiledRuleSet`，`compiledRuleSet` 含一个跨方向的有序切片（收支合并），每个元素是 `{categoryID int; re *regexp.Regexp; direction, level, sortOrder int}`，已按 §4.2 排好序。命中后取其 `direction` 作为账目方向。
 - **并发**：用 `sync.RWMutex` 保护。读多写少：匹配走 RLock，重建走 Lock。或用 `sync.Map` + 每用户 `sync.Once`。
 - **失效**：任何分类**增删改（尤其 regex / sort_order / direction / parent 变更）**后，主动 `invalidate(userID)` 删除该用户缓存条目；下次请求惰性重建（lazy rebuild）。分类维护走管理端、频率极低，重建成本可忽略。
 - **裸词即包含匹配**：缓存里存的是用户配置的裸关键词（如 `瑞幸`）编译结果，依托 `regexp` 非锚定特性天然实现包含匹配；用户在高级模式写 `^瑞幸$` 才是精确匹配。
@@ -450,7 +454,8 @@ func (s *Store) migrate() error {
 - **方向继承触发器**：插入/更新子节点违反方向时能否被触发器 ABORT（最高优先级，见数据模型 §3.5）。
 - **外键级联**：删除分类时 `ledger_entries.category_id` 是否正确 SET NULL；删除用户时所有数据是否级联删除。
 - **路由引擎正确性**：深度优先、同层拖拽序、跨子树 id 兜底的组合场景覆盖。
-- **金额精度**：19.90 → -1990 → 显示 -19.90 的往返无损；边界值（0.01 / 999999.99）。
+- **金额精度**：19.90 → 1990 → 显示 19.90 的往返无损（无符号绝对值）；边界值（0.01 / 999999.99）。
+- **方向派生与待分类汇总**：方向全靠命中分类 `direction`；待分类（`category_id IS NULL`）不计入收/支汇总；跨方向匹配（无符号金额不影响归类）；手动改分类后方向随之切换。
 - **并发写入**：多个 Webhook 并发请求，WAL 模式下无死锁、数据无脏写。
 - **CSV 去重**：重复上传同一 CSV 文件，第二次全部跳过；文件内合法重复行（同分钟同额）不被误拦。
 
@@ -458,3 +463,4 @@ func (s *Store) migrate() error {
 **版本说明**：
 - v1.0 (2026-07-05)：首版技术概要设计。定义整体架构、关键查询（递归 CTE 多级汇总 + 一级饼图 + 本级直接伪切片）、路由引擎（Go regexp 预编译缓存 + 深度优先排序 + 应用层溯源填充）、双轨鉴权（webhook_token + Session/JWT）、REST API 端点清单（auth/webhook/dashboard/entries/categories/import 六组）、非功能落地（东八区时间归一化舍秒 + WAL 并发 + decimal 精度 + PRAGMA 强制外键 + 部署配置与测试重点）。
 - v1.1 (2026-07-05)：补账户管理（仅管理员）。`users` 表加 `is_admin` 字段（默认 0，播种 admin 为 1）；新增 6.8 账户管理端点（GET/POST `/api/users`、DELETE `/api/users/{id}`、POST `/api/users/{id}/reset-password`）；非管理员 403；管理员不可自删/删管理员；重置密码后踢会话；`/api/auth/me` 响应加 `is_admin`。
+- v1.2 (2026-07-06)：**方案 B 重构——方向由归类分类派生、金额改存无符号绝对值**（追需求 v1.14 / 数据模型 v2.9）。时序图去掉 `direction=sign(amount)`；§2 schema 要点改无符号 + 方向来自分类；3.4 月度汇总改 `JOIN categories` 按 `c.direction` 分收支（待分类自然排除，单独计数）；4.1 流程图/4.2 优先级去掉“按符号定方向/方向隔离”改为跨方向统一匹配；4.3 缓存由收/支双切片改为单个跨方向切片（元素带 `direction`）；§7.7 金额精度用例改无符号，新增“方向派生与待分类汇总”测试点。

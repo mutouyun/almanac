@@ -61,7 +61,10 @@ func TestNormalizeRecordTime(t *testing.T) {
 		{"2026-07-05T14:30:00-05:00", "2026-07-06 03:30", false}, // EST -> CST
 		{"", "", true},
 		{"not-a-time", "", true},
-		{"2026-07-05 14:30", "", true}, // not RFC3339
+		// Bare wall-clock (manual-entry UI), interpreted as CST.
+		{"2026-07-05 14:30", "2026-07-05 14:30", false},
+		{"2026-07-05T14:30", "2026-07-05 14:30", false},
+		{"2026-07-05 14:30:45", "2026-07-05 14:30", false}, // seconds truncated
 	}
 	for _, c := range cases {
 		got, err := normalizeRecordTime(c.in)

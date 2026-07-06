@@ -88,17 +88,40 @@ func isDigits(s string) bool {
 	return true
 }
 
-// normalizeRecordTime parses an ISO 8601 timestamp (with timezone offset) and
-// returns the wall-clock time in China Standard Time (UTC+8), formatted as the
-// fixed-length "YYYY-MM-DD HH:mm". Seconds are truncated, not rounded.
+// normalizeRecordTime parses a timestamp and returns the wall-clock time in
+// China Standard Time (UTC+8), formatted as the fixed-length
+// "YYYY-MM-DD HH:mm". Seconds are truncated, not rounded.
+//
+// It accepts two shapes:
+//   - RFC3339 with a timezone offset (e.g. "2026-07-05T14:30:00+08:00"), used
+//     by webhook callers; the instant is converted into CST.
+//   - A bare CST wall-clock time without offset (e.g. "2026-07-06 12:30" or
+//     "2026-07-06T12:30"), used by the manual-entry UI; it is interpreted as
+//     already being in CST.
 func normalizeRecordTime(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return "", errors.New("empty time")
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return "", fmt.Errorf("invalid time %q (want RFC3339 like 2026-07-05T14:30:00+08:00): %w", raw, err)
+	// Preferred: RFC3339 with offset (webhook path).
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.In(cstZone).Format("2006-01-02 15:04"), nil
 	}
-	return t.In(cstZone).Format("2006-01-02 15:04"), nil
+	// Fallback: bare wall-clock time from the manual-entry UI. Both a space and
+	// a 'T' separator are accepted, with or without seconds. Parsed in CST.
+	for _, layout := range []string{
+		"2006-01-02 15:04",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	} {
+		if t, err := time.ParseInLocation(layout, s, cstZone); err == nil {
+			return t.Format("2006-01-02 15:04"), nil
+		}
+	}
+	return "", fmt.Errorf("invalid time %q (want RFC3339 like 2026-07-05T14:30:00+08:00 or wall-clock like 2026-07-06 12:30): %w", raw, errInvalidTime)
 }
+
+// errInvalidTime is a sentinel wrapped by normalizeRecordTime for callers that
+// only care that parsing failed, not the specific layout mismatch.
+var errInvalidTime = errors.New("unrecognized time format")

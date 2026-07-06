@@ -257,8 +257,8 @@ const title = '账本明细 · Almanac';
             </div>
             <div class="font-bold ${amtColor} shrink-0">${sign}${fmtYuan(e.amount_cents)}</div>
             <div class="flex items-center gap-1 shrink-0">
-              <button class="row-edit p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-all" data-id="${e.id}" title="\u7f16\u8f91"><i class="lucide-pencil w-4 h-4"></i></button>
-              <button class="row-del p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-all" data-id="${e.id}" title="\u5220\u9664"><i class="lucide-trash-2 w-4 h-4"></i></button>
+              <button class="row-edit inline-flex items-center gap-1 px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u7f16\u8f91"><i class="lucide-pencil w-3.5 h-3.5"></i><span>\u7f16\u8f91</span></button>
+              <button class="row-del inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u5220\u9664"><i class="lucide-trash-2 w-3.5 h-3.5"></i><span>\u5220\u9664</span></button>
             </div>
           </div>`;
       }

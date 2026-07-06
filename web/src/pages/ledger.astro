@@ -193,6 +193,49 @@ const title = '账本明细 · Almanac';
           .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
       const fmtYuan = (cents) => '\u00a5' + (Math.abs(cents) / 100).toFixed(2);
+
+      // ---- Icon mapping (Lucide) ----
+      // Each entry maps a set of keywords to a Lucide icon name. Matching is
+      // substring-based against the category name first, then the raw_type
+      // summary. First rule that matches wins, so order roughly by specificity.
+      const ICON_RULES = [
+        { icon: 'utensils',       kw: ['\u9910\u996e', '\u5403', '\u996d', '\u5348\u9910', '\u665a\u9910', '\u65e9\u9910', '\u5916\u5356', '\u7f8e\u98df', 'food', 'meal'] },
+        { icon: 'coffee',         kw: ['\u5496\u5561', '\u5976\u8336', '\u996e\u6599', '\u661f\u5df4\u514b', 'coffee', 'tea'] },
+        { icon: 'shopping-cart',  kw: ['\u8d2d\u7269', '\u8d85\u5e02', '\u91c7\u8d2d', '\u6dd8\u5b9d', '\u4eac\u4e1c', 'shopping'] },
+        { icon: 'shopping-bag',   kw: ['\u670d\u88c5', '\u8863\u670d', '\u978b', '\u5305', '\u7f8e\u5986', '\u5316\u5986\u54c1'] },
+        { icon: 'car',            kw: ['\u4ea4\u901a', '\u6253\u8f66', '\u6253\u7684', '\u51fa\u884c', '\u6c7d\u8f66', '\u52a0\u6cb9', '\u6cb9\u8d39', 'taxi', 'uber'] },
+        { icon: 'bus',            kw: ['\u516c\u4ea4', '\u5730\u94c1', '\u5730\u94c1', '\u9ad8\u94c1', '\u706b\u8f66', '\u706b\u8f66\u7968', '\u5730\u94c1\u7968'] },
+        { icon: 'plane',          kw: ['\u673a\u7968', '\u98de\u673a', '\u822a\u73ed', 'flight'] },
+        { icon: 'home',           kw: ['\u623f\u79df', '\u623f\u8d37', '\u7269\u4e1a', '\u623f\u5b50', '\u79df\u91d1'] },
+        { icon: 'zap',            kw: ['\u6c34\u7535', '\u7535\u8d39', '\u6c34\u8d39', '\u71c3\u6c14', '\u6c34\u7535\u7164'] },
+        { icon: 'wifi',           kw: ['\u8bdd\u8d39', '\u7f51\u8d39', '\u5bbd\u5e26', '\u6d41\u91cf', '\u901a\u4fe1'] },
+        { icon: 'smartphone',     kw: ['\u624b\u673a', '\u6570\u7801', '\u7535\u5b50\u4ea7\u54c1'] },
+        { icon: 'gamepad-2',      kw: ['\u6e38\u620f', '\u5a31\u4e50', '\u5145\u503c'] },
+        { icon: 'clapperboard',   kw: ['\u7535\u5f71', '\u770b\u7535\u5f71', 'ktv', '\u5a31\u4e50'] },
+        { icon: 'heart-pulse',    kw: ['\u533b\u7597', '\u770b\u75c5', '\u533b\u9662', '\u836f', '\u4f53\u68c0', '\u5065\u5eb7'] },
+        { icon: 'graduation-cap', kw: ['\u6559\u80b2', '\u5b66\u4e60', '\u57f9\u8bad', '\u5b66\u8d39', '\u4e66', '\u56fe\u4e66'] },
+        { icon: 'baby',           kw: ['\u5b69\u5b50', '\u5a74\u513f', '\u5c0f\u5b69', '\u6bcd\u5a74'] },
+        { icon: 'gift',           kw: ['\u793c\u7269', '\u793c\u91d1', '\u4eba\u60c5', '\u7ea2\u5305'] },
+        { icon: 'paw-print',      kw: ['\u5ba0\u7269', '\u732b', '\u72d7'] },
+        { icon: 'dumbbell',       kw: ['\u5065\u8eab', '\u8fd0\u52a8', '\u4f53\u80b2'] },
+        { icon: 'briefcase',      kw: ['\u5de5\u8d44', '\u85aa\u8d44', '\u5de5\u4f5c', '\u5de5\u8d44\u6536\u5165', 'salary'] },
+        { icon: 'trending-up',    kw: ['\u7406\u8d22', '\u6295\u8d44', '\u80a1\u7968', '\u57fa\u91d1', '\u6536\u76ca', '\u5229\u606f'] },
+        { icon: 'award',          kw: ['\u5956\u91d1', '\u7ea2\u5229', '\u5956\u52b1', '\u63d0\u6210'] },
+        { icon: 'landmark',       kw: ['\u94f6\u884c', '\u8f6c\u8d26', '\u50a8\u84c4'] },
+        { icon: 'receipt',        kw: ['\u62a5\u9500', '\u53d1\u7968', '\u7a0e'] },
+      ];
+
+      // iconFor resolves the Lucide icon name for one entry. It scans category
+      // name then raw_type against ICON_RULES; if nothing matches it falls back
+      // to a direction glyph (income/expense/unclassified).
+      function iconFor(e) {
+        const hay = ((e.category_name || '') + ' ' + (e.category_path || '') + ' ' + (e.raw_type || '')).toLowerCase();
+        for (const r of ICON_RULES) {
+          if (r.kw.some(k => hay.includes(k.toLowerCase()))) return r.icon;
+        }
+        const dir = e.direction || 0;
+        return dir === -1 ? 'arrow-up-right' : (dir === 1 ? 'arrow-down-left' : 'help-circle');
+      }
       // ---- Entries list + pagination ----
       const elLoading = document.getElementById('entries-loading');
       const elEmpty = document.getElementById('entries-empty');
@@ -233,14 +276,15 @@ const title = '账本明细 · Almanac';
         const isExpense = dir === -1, isIncome = dir === 1;
         const amtColor = isExpense ? 'text-rose-500' : (isIncome ? 'text-emerald-500' : 'text-slate-400');
         const sign = isExpense ? '-' : (isIncome ? '+' : '');
-        const icon = isExpense ? 'arrow-up-right' : (isIncome ? 'arrow-down-left' : 'help-circle');
+        const icon = iconFor(e);
+        const iconTint = isExpense ? 'bg-rose-50 text-rose-500' : (isIncome ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-100 text-slate-400');
         const bg = !e.category_id ? 'bg-amber-50/30' : 'hover:bg-slate-50';
         const srcBadge = e.source === 'manual'
           ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-500 text-[10px] font-bold rounded">\u624b\u52a8</span>'
           : '';
         return `
           <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bg}">
-            <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 shrink-0">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconTint}">
               <i class="lucide-${icon} w-5 h-5"></i>
             </div>
             <div class="flex-1 min-w-0">

@@ -721,10 +721,84 @@ type EntryRow struct {
 	Direction    int    `json:"direction"` // 1 income / -1 expense / 0 unclassified
 }
 
-// ListEntries returns a page of the user's ledger entries, newest first
-// (by record_time then id). limit is clamped to [1,200]; offset is floored
-// at 0. It also returns the total row count for pagination.
-func (s *Store) ListEntries(userID int64, limit, offset int) ([]EntryRow, int, error) {
+// EntryFilter narrows a ListEntries query. All fields are optional; the zero
+// value matches everything. Direction: nil = any; *0 = unclassified only;
+// *1 = income; *-1 = expense. CategoryIDs, when non-empty, restricts to those
+// category ids (the handler expands a chosen category into its subtree).
+// Keyword does a case-insensitive substring match on raw_type OR note.
+// StartTime/EndTime bound record_time (inclusive, "YYYY-MM-DD HH:mm" or a bare
+// date). MinCents/MaxCents bound the unsigned amount (nil = unbounded).
+type EntryFilter struct {
+	Direction   *int
+	CategoryIDs []int64
+	Keyword     string
+	StartTime   string
+	EndTime     string
+	MinCents    *int64
+	MaxCents    *int64
+}
+
+// buildWhere assembles the shared WHERE clause (and args) used by both the
+// count and the page query so they always agree. The leading
+// "user_id = ? AND deleted_at IS NULL" is always present.
+func (f EntryFilter) buildWhere(userID int64) (string, []any) {
+	clauses := []string{"e.user_id = ?", "e.deleted_at IS NULL"}
+	args := []any{userID}
+
+	if f.Direction != nil {
+		switch *f.Direction {
+		case 0:
+			clauses = append(clauses, "e.category_id IS NULL")
+		case 1, -1:
+			// Direction lives on the category; join filters it. Unclassified
+			// rows (NULL category) never match an income/expense filter.
+			clauses = append(clauses, "c.direction = ?")
+			args = append(args, *f.Direction)
+		}
+	}
+	if len(f.CategoryIDs) > 0 {
+		ph := make([]string, len(f.CategoryIDs))
+		for i, id := range f.CategoryIDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		clauses = append(clauses, "e.category_id IN ("+strings.Join(ph, ",")+")")
+	}
+	if kw := strings.TrimSpace(f.Keyword); kw != "" {
+		clauses = append(clauses, "(e.raw_type LIKE ? ESCAPE '\\' OR COALESCE(e.note,'') LIKE ? ESCAPE '\\')")
+		like := "%" + escapeLike(kw) + "%"
+		args = append(args, like, like)
+	}
+	if f.StartTime != "" {
+		clauses = append(clauses, "e.record_time >= ?")
+		args = append(args, f.StartTime)
+	}
+	if f.EndTime != "" {
+		clauses = append(clauses, "e.record_time <= ?")
+		args = append(args, f.EndTime)
+	}
+	if f.MinCents != nil {
+		clauses = append(clauses, "e.amount_cents >= ?")
+		args = append(args, *f.MinCents)
+	}
+	if f.MaxCents != nil {
+		clauses = append(clauses, "e.amount_cents <= ?")
+		args = append(args, *f.MaxCents)
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+// escapeLike escapes LIKE wildcards so user keywords are treated literally.
+func escapeLike(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_")
+	return r.Replace(s)
+}
+
+// ListEntries returns one page of the user's non-deleted entries, newest first
+// (by record_time then id), optionally narrowed by filter. limit is clamped to
+// [1,200]; offset is floored at 0. It also returns the total matching row count
+// for pagination.
+func (s *Store) ListEntries(userID int64, filter EntryFilter, limit, offset int) ([]EntryRow, int, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -732,22 +806,27 @@ func (s *Store) ListEntries(userID int64, limit, offset int) ([]EntryRow, int, e
 		offset = 0
 	}
 
+	where, args := filter.buildWhere(userID)
+
 	var total int
-	if err := s.db.QueryRow(
-		"SELECT COUNT(*) FROM ledger_entries WHERE user_id = ? AND deleted_at IS NULL", userID,
-	).Scan(&total); err != nil {
+	countSQL := `SELECT COUNT(*) FROM ledger_entries e
+LEFT JOIN categories c ON c.id = e.category_id
+WHERE ` + where
+	if err := s.db.QueryRow(countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count entries: %w", err)
 	}
 
-	rows, err := s.db.Query(`
+	pageSQL := `
 SELECT e.id, e.amount_cents, e.raw_type, e.record_time,
        COALESCE(e.note, ''), e.source, e.category_id, COALESCE(c.name, ''),
        COALESCE(c.direction, 0)
 FROM ledger_entries e
 LEFT JOIN categories c ON c.id = e.category_id
-WHERE e.user_id = ? AND e.deleted_at IS NULL
+WHERE ` + where + `
 ORDER BY e.record_time DESC, e.id DESC
-LIMIT ? OFFSET ?`, userID, limit, offset)
+LIMIT ? OFFSET ?`
+	pageArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.Query(pageSQL, pageArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list entries: %w", err)
 	}

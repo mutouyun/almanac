@@ -76,6 +76,44 @@ func (s *Store) CategoryPath(userID, categoryID int64) (string, error) {
 	return set.pathOf(categoryID), nil
 }
 
+// subtreeIDs returns the given category id plus all of its descendants, using
+// the cached parent-link snapshot. Used by the ledger filter so picking a
+// parent category also matches entries filed under its children. Depth is
+// bounded by the schema (levels <= 5); the visited guard prevents any cycle
+// from looping forever. Returns just [rootID] when the id has no children.
+func (set *compiledRuleSet) subtreeIDs(rootID int64) []int64 {
+	out := []int64{rootID}
+	for id, node := range set.byID {
+		if id == rootID {
+			continue
+		}
+		// Walk up from id; if we reach rootID it's a descendant.
+		cur := node.parentID
+		for i := 0; i < 8 && cur != nil; i++ {
+			if *cur == rootID {
+				out = append(out, id)
+				break
+			}
+			p, ok := set.byID[*cur]
+			if !ok {
+				break
+			}
+			cur = p.parentID
+		}
+	}
+	return out
+}
+
+// SubtreeCategoryIDs exposes subtreeIDs through the store using the user's
+// cached category snapshot: the id itself plus every descendant.
+func (s *Store) SubtreeCategoryIDs(userID, rootID int64) ([]int64, error) {
+	set, err := s.rulesFor(userID)
+	if err != nil {
+		return nil, err
+	}
+	return set.subtreeIDs(rootID), nil
+}
+
 // pathOf walks parent links from the given id up to the root, joining names
 // with ">". Empty string when the id is not in the snapshot.
 func (set *compiledRuleSet) pathOf(categoryID int64) string {

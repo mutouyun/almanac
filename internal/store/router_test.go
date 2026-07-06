@@ -192,7 +192,7 @@ func mkentry(t *testing.T, s *Store, uid int64, cents int64, raw string) int64 {
 // entryCategory returns the category_id of an entry (0 = unclassified).
 func entryCategory(t *testing.T, s *Store, uid, entryID int64) int64 {
 	t.Helper()
-	rows, _, err := s.ListEntries(uid, 200, 0)
+	rows, _, err := s.ListEntries(uid, EntryFilter{}, 200, 0)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestListEntriesCategoryPath(t *testing.T) {
 	}
 	unclassified := mkentry(t, s, uid, 500, "mystery")
 
-	rows, _, err := s.ListEntries(uid, 200, 0)
+	rows, _, err := s.ListEntries(uid, EntryFilter{}, 200, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestListEntriesDirection(t *testing.T) {
 	}
 	pending := mkentry(t, s, uid, 700, "mystery")
 
-	rows, _, err := s.ListEntries(uid, 200, 0)
+	rows, _, err := s.ListEntries(uid, EntryFilter{}, 200, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

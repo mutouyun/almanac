@@ -9,7 +9,7 @@ import (
 // nil if it is not present (e.g. soft-deleted). Fails the test on query error.
 func findEntry(t *testing.T, s *Store, uid, id int64) *EntryRow {
 	t.Helper()
-	rows, _, err := s.ListEntries(uid, 200, 0)
+	rows, _, err := s.ListEntries(uid, EntryFilter{}, 200, 0)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestSoftDeleteEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, total, _ := s.ListEntries(uid, 50, 0); total != 1 {
+	if _, total, _ := s.ListEntries(uid, EntryFilter{}, 50, 0); total != 1 {
 		t.Fatalf("pre-delete total = %d, want 1", total)
 	}
 	if err := s.SoftDeleteEntry(uid, id); err != nil {
@@ -205,7 +205,7 @@ func TestSoftDeleteEntry(t *testing.T) {
 	if e := findEntry(t, s, uid, id); e != nil {
 		t.Error("deleted entry still visible in list")
 	}
-	_, total, _ := s.ListEntries(uid, 50, 0)
+	_, total, _ := s.ListEntries(uid, EntryFilter{}, 50, 0)
 	if total != 0 {
 		t.Errorf("post-delete total = %d, want 0", total)
 	}

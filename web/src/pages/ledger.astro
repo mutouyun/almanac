@@ -39,6 +39,53 @@ const title = '账本明细 · Almanac';
         </button>
       </header>
 
+      <!-- Filter bar -->
+      <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mb-6">
+        <div class="flex flex-wrap items-end gap-3">
+          <!-- Direction segmented buttons -->
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">方向</label>
+            <div id="flt-dir" class="inline-flex rounded-xl bg-slate-100 p-0.5 text-sm">
+              <button data-dir="" class="flt-dir-btn px-3 py-1.5 rounded-lg font-medium transition-all bg-white text-slate-700 shadow-sm">全部</button>
+              <button data-dir="expense" class="flt-dir-btn px-3 py-1.5 rounded-lg font-medium transition-all text-slate-500">支出</button>
+              <button data-dir="income" class="flt-dir-btn px-3 py-1.5 rounded-lg font-medium transition-all text-slate-500">收入</button>
+              <button data-dir="unclassified" class="flt-dir-btn px-3 py-1.5 rounded-lg font-medium transition-all text-slate-500">待分类</button>
+            </div>
+          </div>
+          <!-- Category -->
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">分类</label>
+            <select id="flt-cat" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300 min-w-[8rem]"></select>
+          </div>
+          <!-- Keyword -->
+          <div class="flex-1 min-w-[10rem]">
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">关键词</label>
+            <input id="flt-kw" type="text" placeholder="摘要或备注…" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300" />
+          </div>
+          <button id="flt-reset" class="px-3 py-1.5 rounded-xl border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition-all">重置</button>
+        </div>
+        <div class="flex flex-wrap items-end gap-3 mt-3">
+          <!-- Time range -->
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">开始日期</label>
+            <input id="flt-start" type="date" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300" />
+          </div>
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">结束日期</label>
+            <input id="flt-end" type="date" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300" />
+          </div>
+          <!-- Amount range (yuan) -->
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">金额下限（元）</label>
+            <input id="flt-min" type="number" step="0.01" min="0" placeholder="0.00" class="w-28 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300" />
+          </div>
+          <div>
+            <label class="text-[11px] font-medium text-slate-400 mb-1 block">金额上限（元）</label>
+            <input id="flt-max" type="number" step="0.01" min="0" placeholder="不限" class="w-28 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-sm outline-none focus:border-blue-300" />
+          </div>
+        </div>
+      </section>
+
       <!-- Entries table -->
       <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div id="entries-loading" class="p-12 text-center text-slate-400">
@@ -146,7 +193,7 @@ const title = '账本明细 · Almanac';
       // Auth gate + initial load.
       fetch('/api/whoami')
         .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-        .then(() => loadCategories().then(loadEntries))
+        .then(() => loadCategories().then(() => { initFilters(); loadEntries(); }))
         .catch(() => window.location.href = '/login');
 
       // ---- Categories ----
@@ -168,6 +215,79 @@ const title = '账本明细 · Almanac';
         cats = data.categories || [];
         catsExpense = treeOrder(cats.filter(c => c.direction === -1));
         catsIncome = treeOrder(cats.filter(c => c.direction === 1));
+      }
+
+      // ---- Filter bar wiring ----
+      // fltCatOptions builds the filter category dropdown (grouped, no
+      // "unclassified" pseudo-option; blank = any category).
+      function fltCatOptions() {
+        let opts = `<option value="">\u5168\u90e8\u5206\u7c7b</option>`;
+        const group = (label, list) => {
+          if (!list.length) return '';
+          let inner = '';
+          list.forEach(c => {
+            const indent = c.level > 1 ? '\u3000'.repeat(c.level - 1) + '\u2514 ' : '';
+            inner += `<option value="${c.id}">${indent}${c.name}</option>`;
+          });
+          return `<optgroup label="${label}">${inner}</optgroup>`;
+        };
+        opts += group('\u652f\u51fa', catsExpense);
+        opts += group('\u6536\u5165', catsIncome);
+        return opts;
+      }
+
+      // applyFilter resets to page 1 and reloads with current filter state.
+      function applyFilter() { offset = 0; loadEntries(); }
+
+      let kwTimer = null;
+      function initFilters() {
+        document.getElementById('flt-cat').innerHTML = fltCatOptions();
+
+        // Direction segmented buttons.
+        document.querySelectorAll('.flt-dir-btn').forEach(b => {
+          b.onclick = () => {
+            filters.direction = b.dataset.dir;
+            document.querySelectorAll('.flt-dir-btn').forEach(x => {
+              const on = x === b;
+              x.classList.toggle('bg-white', on);
+              x.classList.toggle('text-slate-700', on);
+              x.classList.toggle('shadow-sm', on);
+              x.classList.toggle('text-slate-500', !on);
+            });
+            applyFilter();
+          };
+        });
+
+        document.getElementById('flt-cat').onchange = (e) => { filters.category = e.target.value; applyFilter(); };
+        document.getElementById('flt-start').onchange = (e) => { filters.start = e.target.value; applyFilter(); };
+        document.getElementById('flt-end').onchange = (e) => { filters.end = e.target.value; applyFilter(); };
+        document.getElementById('flt-min').onchange = (e) => { filters.min = e.target.value; applyFilter(); };
+        document.getElementById('flt-max').onchange = (e) => { filters.max = e.target.value; applyFilter(); };
+        // Keyword: 300ms debounce so we don't fire per keystroke.
+        document.getElementById('flt-kw').oninput = (e) => {
+          filters.q = e.target.value;
+          clearTimeout(kwTimer);
+          kwTimer = setTimeout(applyFilter, 300);
+        };
+
+        document.getElementById('flt-reset').onclick = () => {
+          filters.direction = ''; filters.category = ''; filters.q = '';
+          filters.start = ''; filters.end = ''; filters.min = ''; filters.max = '';
+          document.getElementById('flt-cat').value = '';
+          document.getElementById('flt-kw').value = '';
+          document.getElementById('flt-start').value = '';
+          document.getElementById('flt-end').value = '';
+          document.getElementById('flt-min').value = '';
+          document.getElementById('flt-max').value = '';
+          document.querySelectorAll('.flt-dir-btn').forEach(x => {
+            const on = x.dataset.dir === '';
+            x.classList.toggle('bg-white', on);
+            x.classList.toggle('text-slate-700', on);
+            x.classList.toggle('shadow-sm', on);
+            x.classList.toggle('text-slate-500', !on);
+          });
+          applyFilter();
+        };
       }
 
       // catOptions builds the category <select> markup grouped by direction so
@@ -245,13 +365,32 @@ const title = '账本明细 · Almanac';
       const elList = document.getElementById('entries-list');
       const elPager = document.getElementById('pager');
 
+      // ---- Filter state ----
+      const filters = { direction: '', category: '', q: '', start: '', end: '', min: '', max: '' };
+
+      // buildQuery assembles the /api/entries query string from pagination +
+      // the active filters (only non-empty ones are sent).
+      function buildQuery() {
+        const p = new URLSearchParams();
+        p.set('limit', pageSize);
+        p.set('offset', offset);
+        if (filters.direction) p.set('direction', filters.direction);
+        if (filters.category) p.set('category', filters.category);
+        if (filters.q.trim()) p.set('q', filters.q.trim());
+        if (filters.start) p.set('start', filters.start + ' 00:00');
+        if (filters.end) p.set('end', filters.end + ' 23:59');
+        if (filters.min !== '') p.set('min', filters.min);
+        if (filters.max !== '') p.set('max', filters.max);
+        return p.toString();
+      }
+
       async function loadEntries() {
         elLoading.hidden = false;
         elList.hidden = true;
         elEmpty.hidden = true;
         elPager.hidden = true;
         try {
-          const res = await fetch(`/api/entries?limit=${pageSize}&offset=${offset}`);
+          const res = await fetch(`/api/entries?${buildQuery()}`);
           const data = await res.json();
           total = data.total;
           elLoading.hidden = true;
@@ -259,6 +398,9 @@ const title = '账本明细 · Almanac';
           if (!data.entries.length) {
             // If we paged past the end (e.g. after deleting), step back a page.
             if (offset > 0 && total > 0) { offset = Math.max(0, offset - pageSize); return loadEntries(); }
+            const active = filters.direction || filters.category || filters.q.trim() || filters.start || filters.end || filters.min !== '' || filters.max !== '';
+            const msg = elEmpty.querySelector('p');
+            if (msg) msg.textContent = active ? '\u6ca1\u6709\u7b26\u5408\u7b5b\u9009\u6761\u4ef6\u7684\u8d26\u76ee\u3002' : '\u8fd8\u6ca1\u6709\u4efb\u4f55\u8d26\u76ee\uff0c\u70b9\u53f3\u4e0a\u89d2\u5f00\u59cb\u8bb0\u8d26\u5427\u3002';
             elEmpty.hidden = false;
             return;
           }

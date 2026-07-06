@@ -387,20 +387,67 @@ func entriesCreateHandler(st *store.Store, w http.ResponseWriter, r *http.Reques
 
 // entriesListHandler handles GET /api/entries: paginated list, newest first.
 func entriesListHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User) {
+	q := r.URL.Query()
 	limit := 50
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			limit = n
 		}
 	}
 	offset := 0
-	if v := r.URL.Query().Get("offset"); v != "" {
+	if v := q.Get("offset"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			offset = n
 		}
 	}
 
-	entries, total, err := st.ListEntries(u.ID, limit, offset)
+	filter := store.EntryFilter{
+		Keyword:   q.Get("q"),
+		StartTime: strings.TrimSpace(q.Get("start")),
+		EndTime:   strings.TrimSpace(q.Get("end")),
+	}
+	// direction: "income" | "expense" | "unclassified" (anything else = any)
+	switch q.Get("direction") {
+	case "income":
+		d := 1
+		filter.Direction = &d
+	case "expense":
+		d := -1
+		filter.Direction = &d
+	case "unclassified":
+		d := 0
+		filter.Direction = &d
+	}
+	// category: expand the chosen id into its subtree so a parent also matches
+	// entries filed under its children.
+	if v := q.Get("category"); v != "" {
+		if cid, err := strconv.ParseInt(v, 10, 64); err == nil && cid > 0 {
+			if ids, err := st.SubtreeCategoryIDs(u.ID, cid); err == nil {
+				filter.CategoryIDs = ids
+			} else {
+				filter.CategoryIDs = []int64{cid}
+			}
+		}
+	}
+	// amount range in yuan -> unsigned cents
+	if v := strings.TrimSpace(q.Get("min")); v != "" {
+		if c, err := parseAmountToCents(v); err == nil {
+			if c < 0 {
+				c = -c
+			}
+			filter.MinCents = &c
+		}
+	}
+	if v := strings.TrimSpace(q.Get("max")); v != "" {
+		if c, err := parseAmountToCents(v); err == nil {
+			if c < 0 {
+				c = -c
+			}
+			filter.MaxCents = &c
+		}
+	}
+
+	entries, total, err := st.ListEntries(u.ID, filter, limit, offset)
 	if err != nil {
 		log.Printf("list entries error: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)

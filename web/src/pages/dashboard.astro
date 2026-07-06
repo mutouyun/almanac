@@ -277,6 +277,43 @@ const title = '看板 · Almanac';
         return opts;
       }
 
+      // ---- Icon mapping (Lucide) ---- kept in sync with ledger.astro so the
+      // dashboard recent list and the full ledger render icons identically.
+      const ICON_RULES = [
+        { icon: 'utensils',       kw: ['餐饮', '吃', '饭', '午餐', '晚餐', '早餐', '外卖', '美食', 'food', 'meal'] },
+        { icon: 'coffee',         kw: ['咖啡', '奶茶', '饮料', '星巴克', 'coffee', 'tea'] },
+        { icon: 'shopping-cart',  kw: ['购物', '超市', '采购', '淘宝', '京东', 'shopping'] },
+        { icon: 'shopping-bag',   kw: ['服装', '衣服', '鞋', '包', '美妆', '化妆品'] },
+        { icon: 'car',            kw: ['交通', '打车', '打的', '出行', '汽车', '加油', '油费', 'taxi', 'uber'] },
+        { icon: 'bus',            kw: ['公交', '地铁', '高铁', '火车', '火车票', '地铁票'] },
+        { icon: 'plane',          kw: ['机票', '飞机', '航班', 'flight'] },
+        { icon: 'home',           kw: ['房租', '房贷', '物业', '房子', '租金'] },
+        { icon: 'zap',            kw: ['水电', '电费', '水费', '燃气', '水电煤'] },
+        { icon: 'wifi',           kw: ['话费', '网费', '宽带', '流量', '通信'] },
+        { icon: 'smartphone',     kw: ['手机', '数码', '电子产品'] },
+        { icon: 'gamepad-2',      kw: ['游戏', '娱乐', '充值'] },
+        { icon: 'clapperboard',   kw: ['电影', '看电影', 'ktv'] },
+        { icon: 'heart-pulse',    kw: ['医疗', '看病', '医院', '药', '体检', '健康'] },
+        { icon: 'graduation-cap', kw: ['教育', '学习', '培训', '学费', '书', '图书'] },
+        { icon: 'baby',           kw: ['孩子', '婴儿', '小孩', '母婴'] },
+        { icon: 'gift',           kw: ['礼物', '礼金', '人情', '红包'] },
+        { icon: 'paw-print',      kw: ['宠物', '猫', '狗'] },
+        { icon: 'dumbbell',       kw: ['健身', '运动', '体育'] },
+        { icon: 'briefcase',      kw: ['工资', '薪资', '工作', 'salary'] },
+        { icon: 'trending-up',    kw: ['理财', '投资', '股票', '基金', '收益', '利息'] },
+        { icon: 'award',          kw: ['奖金', '红利', '奖励', '提成'] },
+        { icon: 'landmark',       kw: ['银行', '转账', '储蓄'] },
+        { icon: 'receipt',        kw: ['报销', '发票', '税'] },
+      ];
+      function iconFor(e) {
+        const hay = ((e.category_name || '') + ' ' + (e.category_path || '') + ' ' + (e.raw_type || '')).toLowerCase();
+        for (const r of ICON_RULES) {
+          if (r.kw.some(k => hay.includes(k.toLowerCase()))) return r.icon;
+        }
+        const dir = e.direction || 0;
+        return dir === -1 ? 'arrow-up-right' : (dir === 1 ? 'arrow-down-left' : 'help-circle');
+      }
+
       async function loadEntries() {
         const list = document.getElementById('entries-list');
         const loading = document.getElementById('entries-loading');
@@ -296,12 +333,13 @@ const title = '看板 · Almanac';
             const yuan = (Math.abs(e.amount_cents) / 100).toFixed(2);
             const amtColor = isExpense ? 'text-rose-500' : (isIncome ? 'text-emerald-500' : 'text-slate-400');
             const sign = isExpense ? '-' : (isIncome ? '+' : '');
-            const icon = isExpense ? 'arrow-up-right' : (isIncome ? 'arrow-down-left' : 'help-circle');
+            const icon = iconFor(e);
+            const iconTint = isExpense ? 'bg-rose-50 text-rose-500' : (isIncome ? 'bg-emerald-50 text-emerald-500' : 'bg-slate-100 text-slate-400');
             const bgClass = !e.category_id ? 'bg-amber-50/30' : 'hover:bg-slate-50';
             
             return `
               <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bgClass}">
-                <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconTint}">
                   <i data-lucide="${icon}" class="w-5 h-5"></i>
                 </div>
                 <div class="flex-1 min-w-0">

@@ -108,6 +108,18 @@ const title = '看板 · Almanac';
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Main List -->
         <div class="lg:col-span-2 space-y-6">
+          <!-- Expense breakdown chart -->
+          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <i class="lucide-pie-chart text-rose-500 w-5 h-5"></i>
+              支出分布
+            </h3>
+            <div id="chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
+            <div class="relative" style="height: 260px;">
+              <canvas id="expense-chart"></canvas>
+            </div>
+          </section>
+
           <section id="entries" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
               <h3 class="font-bold text-slate-800 flex items-center gap-2">
@@ -136,18 +148,6 @@ const title = '看板 · Almanac';
 
         <!-- Widgets Sidebar -->
         <div class="space-y-6">
-          <!-- Expense breakdown chart -->
-          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <i class="lucide-pie-chart text-rose-500 w-5 h-5"></i>
-              支出分布
-            </h3>
-            <div id="chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
-            <div class="relative" style="height: 220px;">
-              <canvas id="expense-chart"></canvas>
-            </div>
-          </section>
-
           <!-- Webhook Settings Widget -->
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">

@@ -315,8 +315,8 @@ func parseManualEntry(req manualEntryRequest) (store.ManualEntryInput, string) {
 	if err != nil {
 		return store.ManualEntryInput{}, "invalid time"
 	}
-	if strings.TrimSpace(req.RawType) == "" {
-		return store.ManualEntryInput{}, "summary is required"
+	if strings.TrimSpace(req.RawType) == "" && req.CategoryID == nil {
+		return store.ManualEntryInput{}, "summary or category is required"
 	}
 	return store.ManualEntryInput{
 		CategoryID:  req.CategoryID,

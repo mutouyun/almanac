@@ -330,6 +330,93 @@ func entriesHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// currentMonthKey returns the current Asia/Shanghai month as "YYYY-MM". It
+// falls back to UTC-derived value if the timezone database is unavailable.
+func currentMonthKey() string {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("CST", 8*3600)
+	}
+	return time.Now().In(loc).Format("2006-01")
+}
+
+// summaryHandler serves GET /api/summary?month=YYYY-MM with the month's
+// income/expense/balance plus unclassified totals and prior-month figures.
+// Month defaults to the current Asia/Shanghai month when omitted.
+func summaryHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		month := r.URL.Query().Get("month")
+		if month == "" {
+			month = currentMonthKey()
+		}
+		sum, err := st.SummaryByMonth(u.ID, month)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid month"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(sum)
+	}
+}
+
+// summaryByCategoryResponse wraps the per-category breakdown slices.
+type summaryByCategoryResponse struct {
+	Month     string                `json:"month"`
+	Direction int                   `json:"direction"`
+	Slices    []store.CategorySlice `json:"slices"`
+}
+
+// summaryByCategoryHandler serves GET /api/summary/by-category?month=YYYY-MM&direction=-1
+// with per-category totals for one direction, feeding the breakdown chart.
+// direction defaults to -1 (expense); month defaults to the current month.
+func summaryByCategoryHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		month := r.URL.Query().Get("month")
+		if month == "" {
+			month = currentMonthKey()
+		}
+		direction := -1
+		if v := r.URL.Query().Get("direction"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && (n == 1 || n == -1) {
+				direction = n
+			}
+		}
+		slices, err := st.SummaryByCategory(u.ID, month, direction)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid month"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(summaryByCategoryResponse{
+			Month:     month,
+			Direction: direction,
+			Slices:    slices,
+		})
+	}
+}
+
 // updateEntryCategoryRequest is the body for PATCH /api/entries/{id}/category.
 // CategoryID is a pointer so an explicit null clears the category (unclassify),
 // while omitting it is treated the same as null.
@@ -822,6 +909,8 @@ func main() {
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 	mux.Handle("/api/entries", entriesHandler(st))
 	mux.Handle("/api/entries/", entryItemHandler(st))
+	mux.Handle("/api/summary", summaryHandler(st))
+	mux.Handle("/api/summary/by-category", summaryByCategoryHandler(st))
 	mux.Handle("/api/categories", categoriesHandler(st))
 	mux.Handle("/api/categories/", categoryItemHandler(st))
 	mux.Handle("/api/users", usersHandler(st))

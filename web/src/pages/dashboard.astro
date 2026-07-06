@@ -11,6 +11,7 @@ const title = '看板 · Almanac';
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.400.0/font/lucide.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
       @font-face {
         font-family: 'Geist';
@@ -57,6 +58,10 @@ const title = '看板 · Almanac';
       </header>
 
       <!-- Grid Layout -->
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-sm font-bold text-slate-400 uppercase tracking-wider">本月概览</h2>
+        <input id="month-picker" type="month" class="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:border-blue-300" />
+      </div>
       <div class="grid grid-cols-3 gap-6 mb-8">
         <!-- Quick Stats -->
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -66,8 +71,8 @@ const title = '看板 · Almanac';
             </div>
             <span class="text-sm font-medium text-slate-500">本月收入</span>
           </div>
-          <div class="text-2xl font-bold text-slate-800">¥ 0.00</div>
-          <div class="text-xs text-emerald-500 mt-2 font-medium">相比上月 +0%</div>
+          <div id="stat-income" class="text-2xl font-bold text-slate-800">¥ 0.00</div>
+          <div id="stat-income-delta" class="text-xs text-emerald-500 mt-2 font-medium">相比上月 +0%</div>
         </div>
 
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -77,8 +82,8 @@ const title = '看板 · Almanac';
             </div>
             <span class="text-sm font-medium text-slate-500">本月支出</span>
           </div>
-          <div class="text-2xl font-bold text-slate-800">¥ 0.00</div>
-          <div class="text-xs text-rose-400 mt-2 font-medium">预算剩余 100%</div>
+          <div id="stat-expense" class="text-2xl font-bold text-slate-800">¥ 0.00</div>
+          <div id="stat-expense-delta" class="text-xs text-rose-400 mt-2 font-medium">相比上月 +0%</div>
         </div>
 
         <div class="bg-blue-600 p-6 rounded-2xl shadow-lg shadow-blue-100 text-white">
@@ -88,15 +93,22 @@ const title = '看板 · Almanac';
             </div>
             <span class="text-sm font-medium opacity-80">当前结余</span>
           </div>
-          <div class="text-2xl font-bold">¥ 0.00</div>
+          <div id="stat-balance" class="text-2xl font-bold">¥ 0.00</div>
           <div class="text-xs opacity-70 mt-2">实时数据汇总</div>
         </div>
       </div>
 
+      <!-- Unclassified alert -->
+      <a id="unclassified-alert" href="#entries" class="hidden mb-8 items-center gap-3 bg-amber-50 border border-amber-200 text-amber-700 px-5 py-3 rounded-2xl hover:bg-amber-100 transition-all">
+        <i class="lucide-alert-triangle w-5 h-5 shrink-0"></i>
+        <span id="unclassified-text" class="text-sm font-medium"></span>
+        <i class="lucide-chevron-right w-4 h-4 ml-auto"></i>
+      </a>
+
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Main List -->
         <div class="lg:col-span-2 space-y-6">
-          <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <section id="entries" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
               <h3 class="font-bold text-slate-800 flex items-center gap-2">
                 <i class="lucide-list text-blue-500 w-5 h-5"></i>
@@ -124,6 +136,18 @@ const title = '看板 · Almanac';
 
         <!-- Widgets Sidebar -->
         <div class="space-y-6">
+          <!-- Expense breakdown chart -->
+          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <i class="lucide-pie-chart text-rose-500 w-5 h-5"></i>
+              支出分布
+            </h3>
+            <div id="chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
+            <div class="relative" style="height: 220px;">
+              <canvas id="expense-chart"></canvas>
+            </div>
+          </section>
+
           <!-- Webhook Settings Widget -->
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -178,7 +202,7 @@ const title = '看板 · Almanac';
           greetingName.textContent = d.username;
           if (d.is_admin) adminAction.classList.remove('hidden');
           loadWebhookToken();
-          loadCategories().then(loadEntries);
+          loadCategories().then(() => { loadEntries(); loadSummary(); loadChart(); });
         })
         .catch(() => window.location.href = '/login');
 
@@ -317,8 +341,95 @@ const title = '看板 · Almanac';
               body: JSON.stringify({ category_id: sel.value ? Number(sel.value) : null }),
             });
             loadEntries();
+            loadSummary();
+            loadChart();
           };
         });
+      }
+
+      // ---- Summary cards + chart ----
+      const fmtYuan = (cents) => '\u00a5 ' + (Math.abs(cents) / 100).toFixed(2);
+
+      // Month picker: default to current month; changing it reloads everything.
+      const monthPicker = document.getElementById('month-picker');
+      function selectedMonth() {
+        return monthPicker.value || new Date().toISOString().slice(0, 7);
+      }
+      monthPicker.value = new Date().toISOString().slice(0, 7);
+      monthPicker.onchange = () => { loadSummary(); loadChart(); };
+
+      // pctDelta renders the "vs last month" text; guards divide-by-zero.
+      function pctDelta(cur, prev) {
+        if (prev === 0) return cur === 0 ? '\u4e0e\u4e0a\u6708\u6301\u5e73' : '\u8f83\u4e0a\u6708 \u65b0\u589e';
+        const p = Math.round(((cur - prev) / prev) * 100);
+        return '\u76f8\u6bd4\u4e0a\u6708 ' + (p >= 0 ? '+' : '') + p + '%';
+      }
+
+      async function loadSummary() {
+        try {
+          const res = await fetch(`/api/summary?month=${selectedMonth()}`);
+          const d = await res.json();
+          document.getElementById('stat-income').textContent = fmtYuan(d.income_cents);
+          document.getElementById('stat-expense').textContent = fmtYuan(d.expense_cents);
+          document.getElementById('stat-balance').textContent = fmtYuan(d.balance_cents);
+          document.getElementById('stat-income-delta').textContent = pctDelta(d.income_cents, d.prev_income_cents);
+          document.getElementById('stat-expense-delta').textContent = pctDelta(d.expense_cents, d.prev_expense_cents);
+
+          const alert = document.getElementById('unclassified-alert');
+          if (d.unclassified_count > 0) {
+            document.getElementById('unclassified-text').textContent =
+              `\u6709 ${d.unclassified_count} \u7b14\u5f85\u5206\u7c7b\uff0c\u5171 ${fmtYuan(d.unclassified_cents)}\uff0c\u70b9\u51fb\u53bb\u5f52\u7c7b`;
+            alert.classList.remove('hidden');
+            alert.classList.add('flex');
+          } else {
+            alert.classList.add('hidden');
+            alert.classList.remove('flex');
+          }
+        } catch (e) {}
+      }
+
+      const CHART_COLORS = ['#f43f5e', '#fb923c', '#facc15', '#4ade80', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#94a3b8'];
+      let expenseChart = null;
+
+      async function loadChart() {
+        const empty = document.getElementById('chart-empty');
+        const canvas = document.getElementById('expense-chart');
+        try {
+          const res = await fetch(`/api/summary/by-category?month=${selectedMonth()}&direction=-1`);
+          const d = await res.json();
+          const slices = d.slices || [];
+          if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
+          if (!slices.length) {
+            empty.hidden = false;
+            canvas.style.display = 'none';
+            return;
+          }
+          empty.hidden = true;
+          canvas.style.display = 'block';
+          expenseChart = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+              labels: slices.map(s => s.name),
+              datasets: [{
+                data: slices.map(s => s.total_cents / 100),
+                backgroundColor: slices.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+                borderWidth: 0,
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } },
+                tooltip: {
+                  callbacks: {
+                    label: (ctx) => ` ${ctx.label}: \u00a5${ctx.parsed.toFixed(2)}`,
+                  },
+                },
+              },
+            },
+          });
+        } catch (e) {}
       }
     </script>
   </body>

@@ -10,7 +10,7 @@ const title = '分类管理 · Almanac';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.400.0/font/lucide.min.css" />
+    <script is:inline src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
     <style>
       @font-face {
         font-family: 'Geist';
@@ -47,7 +47,7 @@ const title = '分类管理 · Almanac';
         <div class="lg:col-span-2 space-y-6">
           <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-800">
-              <i class="lucide-git-merge text-blue-500 w-5 h-5"></i>
+              <i data-lucide="git-merge" class="text-blue-500 w-5 h-5"></i>
               分类结构树
             </div>
             
@@ -67,7 +67,7 @@ const title = '分类管理 · Almanac';
         <div class="space-y-6">
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-8">
             <h3 class="font-bold text-slate-800 mb-6 flex items-center gap-2">
-              <i class="lucide-plus-circle text-emerald-500 w-5 h-5"></i>
+              <i data-lucide="plus-circle" class="text-emerald-500 w-5 h-5"></i>
               新增分类
             </h3>
             <form id="add-form" class="space-y-4">
@@ -183,10 +183,10 @@ const title = '分类管理 · Almanac';
                 </div>
                 <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onclick="editCategory(${c.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all">
-                    <i class="lucide-pencil w-4 h-4"></i>
+                    <i data-lucide="pencil" class="w-4 h-4"></i>
                   </button>
                   <button onclick="deleteCategory(${c.id})" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all">
-                    <i class="lucide-trash-2 w-4 h-4"></i>
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
                   </button>
                 </div>
               </div>
@@ -196,6 +196,7 @@ const title = '分类管理 · Almanac';
         };
         walk(0, 0);
         tree.innerHTML = rows.join('');
+        window.lucide?.createIcons();
         tree.hidden = false;
         empty.hidden = true;
       }

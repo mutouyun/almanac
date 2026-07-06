@@ -10,7 +10,7 @@ const title = '看板 · Almanac';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.400.0/font/lucide.min.css" />
+    <script is:inline src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
       @font-face {
@@ -47,11 +47,11 @@ const title = '看板 · Almanac';
         </div>
         <div class="flex gap-3">
           <a id="admin-action" href="/admin/users" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-xl font-medium transition-all flex items-center gap-2">
-            <i class="lucide-users w-4 h-4"></i>
+            <i data-lucide="users" class="w-4 h-4"></i>
             <span>账户管理</span>
           </a>
           <a href="/ledger" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
-            <i class="lucide-plus w-4 h-4"></i>
+            <i data-lucide="plus" class="w-4 h-4"></i>
             <span>手动记账</span>
           </a>
         </div>
@@ -67,7 +67,7 @@ const title = '看板 · Almanac';
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div class="flex items-center gap-3 mb-4">
             <div class="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-              <i class="lucide-trending-up w-5 h-5"></i>
+              <i data-lucide="trending-up" class="w-5 h-5"></i>
             </div>
             <span class="text-sm font-medium text-slate-500">本月收入</span>
           </div>
@@ -78,7 +78,7 @@ const title = '看板 · Almanac';
         <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div class="flex items-center gap-3 mb-4">
             <div class="p-2 bg-rose-50 text-rose-600 rounded-lg">
-              <i class="lucide-trending-down w-5 h-5"></i>
+              <i data-lucide="trending-down" class="w-5 h-5"></i>
             </div>
             <span class="text-sm font-medium text-slate-500">本月支出</span>
           </div>
@@ -89,7 +89,7 @@ const title = '看板 · Almanac';
         <div class="bg-blue-600 p-6 rounded-2xl shadow-lg shadow-blue-100 text-white">
           <div class="flex items-center gap-3 mb-4">
             <div class="p-2 bg-blue-500 text-white rounded-lg">
-              <i class="lucide-wallet w-5 h-5"></i>
+              <i data-lucide="wallet" class="w-5 h-5"></i>
             </div>
             <span class="text-sm font-medium opacity-80">当前结余</span>
           </div>
@@ -100,9 +100,9 @@ const title = '看板 · Almanac';
 
       <!-- Unclassified alert -->
       <a id="unclassified-alert" href="#entries" class="hidden mb-8 items-center gap-3 bg-amber-50 border border-amber-200 text-amber-700 px-5 py-3 rounded-2xl hover:bg-amber-100 transition-all">
-        <i class="lucide-alert-triangle w-5 h-5 shrink-0"></i>
+        <i data-lucide="alert-triangle" class="w-5 h-5 shrink-0"></i>
         <span id="unclassified-text" class="text-sm font-medium"></span>
-        <i class="lucide-chevron-right w-4 h-4 ml-auto"></i>
+        <i data-lucide="chevron-right" class="w-4 h-4 ml-auto"></i>
       </a>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -111,7 +111,7 @@ const title = '看板 · Almanac';
           <!-- Expense breakdown chart -->
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <i class="lucide-pie-chart text-rose-500 w-5 h-5"></i>
+              <i data-lucide="pie-chart" class="text-rose-500 w-5 h-5"></i>
               支出分布
             </h3>
             <div id="chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
@@ -123,7 +123,7 @@ const title = '看板 · Almanac';
           <section id="entries" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
               <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                <i class="lucide-list text-blue-500 w-5 h-5"></i>
+                <i data-lucide="list" class="text-blue-500 w-5 h-5"></i>
                 账目明细
               </h3>
               <a href="/ledger" class="text-xs text-blue-600 hover:underline">查看全部</a>
@@ -151,7 +151,7 @@ const title = '看板 · Almanac';
           <!-- Webhook Settings Widget -->
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
             <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <i class="lucide-zap text-amber-500 w-5 h-5"></i>
+              <i data-lucide="zap" class="text-amber-500 w-5 h-5"></i>
               自动化同步
             </h3>
             <div class="space-y-4">
@@ -172,10 +172,10 @@ const title = '看板 · Almanac';
           <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group">
             <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('pw-form-container').classList.toggle('hidden')">
                 <h3 class="font-bold text-slate-800 flex items-center gap-2">
-                    <i class="lucide-key text-slate-400 w-5 h-5"></i>
+                    <i data-lucide="key" class="text-slate-400 w-5 h-5"></i>
                     安全设置
                 </h3>
-                <i class="lucide-chevron-down w-4 h-4 text-slate-300"></i>
+                <i data-lucide="chevron-down" class="w-4 h-4 text-slate-300"></i>
             </div>
             <div id="pw-form-container" class="mt-4 space-y-3 hidden">
                 <input id="old" type="password" placeholder="当前密码" class="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:border-blue-300 transition-all" />
@@ -302,7 +302,7 @@ const title = '看板 · Almanac';
             return `
               <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bgClass}">
                 <div class="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400">
-                  <i class="lucide-${icon} w-5 h-5"></i>
+                  <i data-lucide="${icon}" class="w-5 h-5"></i>
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
@@ -323,6 +323,7 @@ const title = '看板 · Almanac';
               </div>
             `;
           }).join('');
+          window.lucide?.createIcons();
 
           document.getElementById('entries-total').textContent = `显示最近 ${data.entries.length} 条（共 ${data.total} 条），完整明细见「账本」`;
           bindCategorySelects();

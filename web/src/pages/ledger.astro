@@ -10,7 +10,7 @@ const title = '账本明细 · Almanac';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.400.0/font/lucide.min.css" />
+    <script is:inline src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
     <style>
       @font-face {
         font-family: 'Geist';
@@ -34,7 +34,7 @@ const title = '账本明细 · Almanac';
           <p class="text-slate-500 mt-1">在这里手动记账，管理所有流水。</p>
         </div>
         <button id="btn-new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
-          <i class="lucide-plus w-4 h-4"></i>
+          <i data-lucide="plus" class="w-4 h-4"></i>
           <span>手动记账</span>
         </button>
       </header>
@@ -49,7 +49,7 @@ const title = '账本明细 · Almanac';
         </div>
 
         <div id="entries-empty" class="p-16 text-center text-slate-400" hidden>
-          <i class="lucide-inbox w-10 h-10 mx-auto mb-3 block"></i>
+          <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-3 block"></i>
           <p class="text-sm">还没有任何账目，点右上角开始记账吧。</p>
         </div>
 
@@ -81,7 +81,7 @@ const title = '账本明细 · Almanac';
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
           <div class="flex justify-between items-center mb-5">
             <h3 id="modal-title" class="text-lg font-bold text-slate-800">手动记账</h3>
-            <button id="modal-close" class="text-slate-400 hover:text-slate-600"><i class="lucide-x w-5 h-5"></i></button>
+            <button id="modal-close" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
           </div>
           <div class="space-y-4">
             <div>
@@ -117,7 +117,7 @@ const title = '账本明细 · Almanac';
       <div id="del-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 items-center justify-center p-4" hidden>
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
           <div class="w-12 h-12 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto mb-4">
-            <i class="lucide-trash-2 w-6 h-6"></i>
+            <i data-lucide="trash-2" class="w-6 h-6"></i>
           </div>
           <h3 class="text-lg font-bold text-slate-800 mb-2">确认删除？</h3>
           <p class="text-sm text-slate-500 mb-5">该账目将从列表和汇总中移除。</p>
@@ -139,6 +139,9 @@ const title = '账本明细 · Almanac';
       let catsIncome = [];
       let editingId = null; // null = create mode
       let deletingId = null;
+
+      // Render static icons present in the initial markup.
+      window.lucide?.createIcons();
 
       // Auth gate + initial load.
       fetch('/api/whoami')
@@ -263,6 +266,7 @@ const title = '账本明细 · Almanac';
           elPager.hidden = false;
           rowCache = data.entries;
           elList.innerHTML = data.entries.map(renderRow).join('');
+          window.lucide?.createIcons();
           bindRowActions();
           renderPager();
         } catch (e) {
@@ -285,7 +289,7 @@ const title = '账本明细 · Almanac';
         return `
           <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bg}">
             <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconTint}">
-              <i class="lucide-${icon} w-5 h-5"></i>
+              <i data-lucide="${icon}" class="w-5 h-5"></i>
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
@@ -301,8 +305,8 @@ const title = '账本明细 · Almanac';
             </div>
             <div class="font-bold ${amtColor} shrink-0">${sign}${fmtYuan(e.amount_cents)}</div>
             <div class="flex items-center gap-1 shrink-0">
-              <button class="row-edit inline-flex items-center gap-1 px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u7f16\u8f91"><i class="lucide-pencil w-3.5 h-3.5"></i><span>\u7f16\u8f91</span></button>
-              <button class="row-del inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u5220\u9664"><i class="lucide-trash-2 w-3.5 h-3.5"></i><span>\u5220\u9664</span></button>
+              <button class="row-edit inline-flex items-center gap-1 px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u7f16\u8f91"><i data-lucide="pencil" class="w-3.5 h-3.5"></i><span>\u7f16\u8f91</span></button>
+              <button class="row-del inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u5220\u9664"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span>\u5220\u9664</span></button>
             </div>
           </div>`;
       }

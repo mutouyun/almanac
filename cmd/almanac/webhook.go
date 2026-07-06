@@ -18,14 +18,14 @@ const webhookHeader = "X-Webhook-Token"
 type webhookRequest struct {
 	Date   string      `json:"date"`   // RFC3339 with tz offset
 	Type   string      `json:"type"`   // raw description
-	Amount json.Number `json:"amount"` // yuan, signed; negative = expense
+	Amount json.Number `json:"amount"` // yuan, unsigned magnitude (legacy sign ignored)
 }
 
 // webhookResponse is returned on successful ingestion.
 type webhookResponse struct {
 	Status      string `json:"status"`       // "ok"
 	ID          int64  `json:"id"`           // new entry id
-	AmountCents int64  `json:"amount_cents"` // stored signed cents
+	AmountCents int64  `json:"amount_cents"` // stored unsigned cents (absolute value)
 	RecordTime  string `json:"record_time"`  // normalized CST wall time
 	Classified  bool   `json:"classified"`   // false = unclassified (MVP: always false)
 }

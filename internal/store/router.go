@@ -4,8 +4,11 @@
 //
 // Design (see docs/ledger_tech_design.md §4):
 //   - Rules are compiled per user and cached (map[userID]*compiledRuleSet).
-//   - Within a direction, rules are ordered by level DESC, sort_order ASC,
-//     id ASC, so the most specific (deepest) category wins; first match stops.
+//   - All categories (both directions) are merged into ONE ordered list and
+//     matched in a single pass: amount sign no longer pre-locks a direction.
+//     Rules are ordered by level DESC, sort_order ASC, id ASC, so the most
+//     specific (deepest) category wins; first match stops. The matched
+//     category's direction becomes the entry's direction.
 //   - Bare keywords act as "contains" matches because Go regexp is unanchored;
 //     users write ^...$ for exact matches. A category with no regex defaults to
 //     an exact, case-sensitive full match on its own name (^QuoteMeta(name)$),
@@ -43,15 +46,16 @@ type compiledRule struct {
 	sortOrder  int
 }
 
-// compiledRuleSet holds a user's rules split by direction, each pre-sorted by
-// match priority (level DESC, sort_order ASC, id ASC). It also carries a byID
-// snapshot of the user's full category tree (all nodes, not just those with a
-// regex) so path derivation (餐饮>饮品>咖啡) can reuse the exact same cached
-// snapshot — same source, same invalidation, no N+1 queries.
+// compiledRuleSet holds a user's rules merged into ONE list, pre-sorted by
+// match priority (level DESC, sort_order ASC, id ASC). Routing matches across
+// both directions in a single pass; the matched category's own direction
+// determines the entry's direction. It also carries a byID snapshot of the
+// user's full category tree (all nodes, not just those with a regex) so path
+// derivation (餐饮>饮品>咖啡) can reuse the exact same cached snapshot — same
+// source, same invalidation, no N+1 queries.
 type compiledRuleSet struct {
-	expense []compiledRule // direction == -1
-	income  []compiledRule // direction == 1
-	byID    map[int64]catNode
+	rules []compiledRule // all categories, both directions, priority-sorted
+	byID  map[int64]catNode
 }
 
 // catNode is the minimal category info needed to walk a path up to the root.
@@ -119,9 +123,10 @@ func (s *Store) InvalidateRules(userID int64) {
 }
 
 // ClassifyEntry returns the category_id a webhook entry should be filed under,
-// or nil (unclassified) when no rule matches. direction is derived from the
-// sign of amountCents: negative = expense, positive = income. A zero amount is
-// rejected upstream and never reaches here; defensively it returns nil.
+// or nil (unclassified) when no rule matches. Matching spans BOTH directions in
+// one merged pass; the matched category's direction becomes the entry's
+// direction. amountCents is only used as a zero-amount guard (a zero amount is
+// rejected upstream and never reaches here; defensively it returns nil).
 func (s *Store) ClassifyEntry(userID int64, amountCents int64, rawType string) (*int64, error) {
 	if amountCents == 0 {
 		return nil, nil
@@ -130,16 +135,12 @@ func (s *Store) ClassifyEntry(userID int64, amountCents int64, rawType string) (
 	if err != nil {
 		return nil, err
 	}
-	rules := set.expense
-	if amountCents > 0 {
-		rules = set.income
-	}
 	// Trim so a webhook description with leading/trailing spaces can still
 	// satisfy an exact full-match rule (^name$).
 	raw := strings.TrimSpace(rawType)
-	for i := range rules {
-		if rules[i].re.MatchString(raw) {
-			id := rules[i].categoryID
+	for i := range set.rules {
+		if set.rules[i].re.MatchString(raw) {
+			id := set.rules[i].categoryID
 			return &id, nil
 		}
 	}
@@ -199,14 +200,9 @@ func (s *Store) buildRuleSet(userID int64) (*compiledRuleSet, error) {
 			level:      c.Level,
 			sortOrder:  c.SortOrder,
 		}
-		if c.Direction > 0 {
-			set.income = append(set.income, rule)
-		} else {
-			set.expense = append(set.expense, rule)
-		}
+		set.rules = append(set.rules, rule)
 	}
-	sortRules(set.expense)
-	sortRules(set.income)
+	sortRules(set.rules)
 	return set, nil
 }
 

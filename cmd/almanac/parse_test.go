@@ -8,12 +8,12 @@ func TestParseAmountToCents(t *testing.T) {
 		want    int64
 		wantErr bool
 	}{
-		{"-19.9", -1990, false},
+		{"-19.9", 1990, false}, // sign dropped: amount is stored unsigned (abs)
 		{"19.9", 1990, false},
 		{"19.90", 1990, false},
 		{"100", 10000, false},
 		{"0.01", 1, false},
-		{"-0.01", -1, false},
+		{"-0.01", 1, false}, // sign dropped: abs value
 		{"+42.5", 4250, false},
 		{"1234.56", 123456, false},
 		{"0.005", 1, false},   // half-up rounds to 1 cent

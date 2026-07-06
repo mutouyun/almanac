@@ -11,26 +11,27 @@ import (
 // errZeroAmount is returned when the parsed amount is exactly zero.
 var errZeroAmount = errors.New("amount must not be zero")
 
-// parseAmountToCents converts a decimal money string (yuan) into signed
+// parseAmountToCents converts a decimal money string (yuan) into UNSIGNED
 // integer cents WITHOUT ever going through float64, to avoid IEEE-754
 // truncation (e.g. -19.9 -> -18.999...). It accepts an optional leading sign,
 // an integer part, and up to two fractional digits. A third fractional digit
 // (if present) is used for half-up rounding; more than three digits are
 // rejected as too precise for currency.
 //
-// Examples: "-19.9" -> -1990, "100" -> 10000, "0.005" -> 1 (rounds up).
+// The sign is deliberately IGNORED (a legacy client may still send "-19.9"):
+// direction is no longer carried by the amount's sign but derived from the
+// matched category, so amounts are stored as unsigned absolute cents.
+//
+// Examples: "-19.9" -> 1990, "100" -> 10000, "0.005" -> 1 (rounds up).
 func parseAmountToCents(raw string) (int64, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return 0, errors.New("empty amount")
 	}
 
-	neg := false
+	// Drop an optional leading sign; magnitude only.
 	switch s[0] {
-	case '+':
-		s = s[1:]
-	case '-':
-		neg = true
+	case '+', '-':
 		s = s[1:]
 	}
 	if s == "" {
@@ -70,9 +71,6 @@ func parseAmountToCents(raw string) (int64, error) {
 	}
 	if cents == 0 {
 		return 0, errZeroAmount
-	}
-	if neg {
-		cents = -cents
 	}
 	return cents, nil
 }

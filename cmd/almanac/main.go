@@ -383,9 +383,6 @@ func entryItemHandler(st *store.Store) http.HandlerFunc {
 			case store.ErrCategoryNotFound:
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
-			case store.ErrDirectionMismatch:
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(errorResponse{Error: "category direction does not match entry"})
 			default:
 				log.Printf("update entry category error: %v", err)
 				w.WriteHeader(http.StatusInternalServerError)

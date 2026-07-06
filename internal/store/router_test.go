@@ -32,6 +32,8 @@ func mkcat(t *testing.T, s *Store, uid int64, parent *int64, name string, dir, s
 }
 
 // classify is a helper that fails on error and returns the matched id or 0.
+// amountCents is now only used for the zero-amount guard; direction is derived
+// from the matched category, not from the sign of the amount.
 func classify(t *testing.T, s *Store, uid int64, cents int64, raw string) int64 {
 	t.Helper()
 	id, err := s.ClassifyEntry(uid, cents, raw)
@@ -45,34 +47,39 @@ func classify(t *testing.T, s *Store, uid int64, cents int64, raw string) int64 
 }
 
 // TestRouteContainsMatch: a bare keyword matches anywhere in the raw text
-// (unanchored "contains"), and the sign of the amount picks the direction.
+// (unanchored "contains"). Amount is unsigned; direction comes from the
+// matched category, not the sign.
 func TestRouteContainsMatch(t *testing.T) {
 	s, uid := newTestStore(t)
 	coffee := mkcat(t, s, uid, nil, "咖啡", -1, 0, "瑞幸")
 
-	if got := classify(t, s, uid, -1990, "瑞幸咖啡消费"); got != coffee {
+	if got := classify(t, s, uid, 1990, "瑞幸咖啡消费"); got != coffee {
 		t.Fatalf("contains match: got %d, want %d", got, coffee)
 	}
 	// No rule matches -> unclassified.
-	if got := classify(t, s, uid, -500, "星巴克"); got != 0 {
+	if got := classify(t, s, uid, 500, "星巴克"); got != 0 {
 		t.Fatalf("no match should be unclassified, got %d", got)
 	}
 }
 
-// TestRouteDirectionIsolation: an expense keyword must not match an income
-// entry even if the text matches, and vice versa.
-func TestRouteDirectionIsolation(t *testing.T) {
+// TestRouteCrossDirectionMerge: routing now matches across BOTH directions in
+// one merged pass (amount sign no longer pre-locks a direction). When the same
+// keyword appears in both an income and an expense category at the same level,
+// the deterministic tiebreak (sort_order ASC, then id ASC) decides the winner,
+// and the matched category's direction becomes the entry's direction -- the
+// result is identical regardless of the amount's sign.
+func TestRouteCrossDirectionMerge(t *testing.T) {
 	s, uid := newTestStore(t)
-	salary := mkcat(t, s, uid, nil, "工资", 1, 0, "公司")
-	reimburse := mkcat(t, s, uid, nil, "报销支出", -1, 0, "公司")
+	salary := mkcat(t, s, uid, nil, "工资", 1, 0, "公司")     // income, id lower
+	_ = mkcat(t, s, uid, nil, "报销支出", -1, 0, "公司")        // expense, same level/sort
 
-	// Positive amount -> income direction -> salary.
+	// Same keyword "公司" now competes across directions; salary (lower id) wins
+	// deterministically, and the sign of the amount does not change the result.
 	if got := classify(t, s, uid, 500000, "公司转账"); got != salary {
-		t.Fatalf("income should match salary %d, got %d", salary, got)
+		t.Fatalf("cross-direction merge (positive): want salary %d, got %d", salary, got)
 	}
-	// Negative amount -> expense direction -> reimburse.
-	if got := classify(t, s, uid, -500000, "公司转账"); got != reimburse {
-		t.Fatalf("expense should match reimburse %d, got %d", reimburse, got)
+	if got := classify(t, s, uid, -500000, "公司转账"); got != salary {
+		t.Fatalf("cross-direction merge (negative): sign must not change result, want salary %d, got %d", salary, got)
 	}
 }
 
@@ -84,7 +91,7 @@ func TestRouteLevelPriority(t *testing.T) {
 	drink := mkcat(t, s, uid, &food, "饮品", -1, 0, "美团")
 
 	// Both level-1 食 and level-2 drink match "美团"; deeper wins.
-	if got := classify(t, s, uid, -3000, "美团外卖"); got != drink {
+	if got := classify(t, s, uid, 3000, "美团外卖"); got != drink {
 		t.Fatalf("deeper category should win: got %d, want %d", got, drink)
 	}
 }
@@ -95,7 +102,7 @@ func TestRouteSortOrderTiebreak(t *testing.T) {
 	first := mkcat(t, s, uid, nil, "甲", -1, 1, "通用")
 	_ = mkcat(t, s, uid, nil, "乙", -1, 2, "通用")
 
-	if got := classify(t, s, uid, -100, "通用消费"); got != first {
+	if got := classify(t, s, uid, 100, "通用消费"); got != first {
 		t.Fatalf("lower sort_order should win: got %d, want %d", got, first)
 	}
 }
@@ -106,10 +113,10 @@ func TestRouteAnchoredExact(t *testing.T) {
 	s, uid := newTestStore(t)
 	exact := mkcat(t, s, uid, nil, "精确", -1, 0, "^充值$")
 
-	if got := classify(t, s, uid, -100, "充值"); got != exact {
+	if got := classify(t, s, uid, 100, "充值"); got != exact {
 		t.Fatalf("anchored exact should match identical text: got %d", got)
 	}
-	if got := classify(t, s, uid, -100, "账户充值成功"); got != 0 {
+	if got := classify(t, s, uid, 100, "账户充值成功"); got != 0 {
 		t.Fatalf("anchored exact should NOT match substring, got %d", got)
 	}
 }
@@ -119,22 +126,22 @@ func TestRouteAnchoredExact(t *testing.T) {
 func TestRouteCacheInvalidation(t *testing.T) {
 	s, uid := newTestStore(t)
 	// Prime the cache with no matching rule.
-	if got := classify(t, s, uid, -100, "滴滴出行"); got != 0 {
+	if got := classify(t, s, uid, 100, "滴滴出行"); got != 0 {
 		t.Fatalf("expected unclassified before rule exists, got %d", got)
 	}
 	taxi := mkcat(t, s, uid, nil, "交通", -1, 0, "滴滴")
 	// Cache must have been invalidated by CreateCategory.
-	if got := classify(t, s, uid, -100, "滴滴出行"); got != taxi {
+	if got := classify(t, s, uid, 100, "滴滴出行"); got != taxi {
 		t.Fatalf("expected match after create invalidates cache, got %d", got)
 	}
 	// Update the regex; next classify must reflect it.
 	if err := s.UpdateCategory(uid, taxi, "交通", 0, "高德"); err != nil {
 		t.Fatalf("update category: %v", err)
 	}
-	if got := classify(t, s, uid, -100, "滴滴出行"); got != 0 {
+	if got := classify(t, s, uid, 100, "滴滴出行"); got != 0 {
 		t.Fatalf("old keyword should no longer match after update, got %d", got)
 	}
-	if got := classify(t, s, uid, -100, "高德打车"); got != taxi {
+	if got := classify(t, s, uid, 100, "高德打车"); got != taxi {
 		t.Fatalf("new keyword should match after update, got %d", got)
 	}
 }
@@ -201,15 +208,17 @@ func entryCategory(t *testing.T, s *Store, uid, entryID int64) int64 {
 	return 0
 }
 
-// TestUpdateEntryCategory: manual assign, clear, and the ownership/direction
-// guards.
+// TestUpdateEntryCategory: manual assign, clear, and the ownership guards.
+// Direction is no longer validated against the amount sign (amounts are
+// unsigned; direction is derived from the assigned category), so a category
+// of ANY direction may be attached to ANY entry.
 func TestUpdateEntryCategory(t *testing.T) {
 	s, uid := newTestStore(t)
 	expenseCat := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
 	incomeCat := mkcat(t, s, uid, nil, "工资", 1, 0, "")
-	entry := mkentry(t, s, uid, -3000, "unknown expense")
+	entry := mkentry(t, s, uid, 3000, "unknown")
 
-	// Assign an expense category to an expense entry -> ok.
+	// Assign an expense category -> ok.
 	if err := s.UpdateEntryCategory(uid, entry, &expenseCat); err != nil {
 		t.Fatalf("assign expense category: %v", err)
 	}
@@ -217,9 +226,13 @@ func TestUpdateEntryCategory(t *testing.T) {
 		t.Fatalf("expected category %d, got %d", expenseCat, got)
 	}
 
-	// Direction mismatch: income category on an expense entry -> rejected.
-	if err := s.UpdateEntryCategory(uid, entry, &incomeCat); err != ErrDirectionMismatch {
-		t.Fatalf("expected ErrDirectionMismatch, got %v", err)
+	// Cross-direction assign now ALLOWED: an income category on the same
+	// (unsigned) entry succeeds; the entry's direction simply becomes income.
+	if err := s.UpdateEntryCategory(uid, entry, &incomeCat); err != nil {
+		t.Fatalf("cross-direction assign should now be allowed: %v", err)
+	}
+	if got := entryCategory(t, s, uid, entry); got != incomeCat {
+		t.Fatalf("expected category %d after cross-direction assign, got %d", incomeCat, got)
 	}
 
 	// Clear (unclassify) with nil.
@@ -274,11 +287,11 @@ func TestListEntriesCategoryPath(t *testing.T) {
 	s, uid := newTestStore(t)
 	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
 	coffee := mkcat(t, s, uid, &food, "咖啡", -1, 0, "")
-	classified := mkentry(t, s, uid, -1990, "latte")
+	classified := mkentry(t, s, uid, 1990, "latte")
 	if err := s.UpdateEntryCategory(uid, classified, &coffee); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
-	unclassified := mkentry(t, s, uid, -500, "mystery")
+	unclassified := mkentry(t, s, uid, 500, "mystery")
 
 	rows, _, err := s.ListEntries(uid, 200, 0)
 	if err != nil {
@@ -290,6 +303,46 @@ func TestListEntriesCategoryPath(t *testing.T) {
 		}
 		if e.ID == unclassified && e.CategoryPath != "" {
 			t.Fatalf("unclassified path should be empty, got %q", e.CategoryPath)
+		}
+	}
+}
+
+// TestListEntriesDirection: ListEntries derives each entry's direction from its
+// assigned category (income category -> +1, expense category -> -1). An
+// unclassified entry (no category) has direction 0 ("待分类", no direction).
+func TestListEntriesDirection(t *testing.T) {
+	s, uid := newTestStore(t)
+	expenseCat := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
+	incomeCat := mkcat(t, s, uid, nil, "工资", 1, 0, "")
+
+	expEntry := mkentry(t, s, uid, 1990, "lunch")
+	if err := s.UpdateEntryCategory(uid, expEntry, &expenseCat); err != nil {
+		t.Fatalf("assign expense: %v", err)
+	}
+	incEntry := mkentry(t, s, uid, 500000, "payday")
+	if err := s.UpdateEntryCategory(uid, incEntry, &incomeCat); err != nil {
+		t.Fatalf("assign income: %v", err)
+	}
+	pending := mkentry(t, s, uid, 700, "mystery")
+
+	rows, _, err := s.ListEntries(uid, 200, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range rows {
+		switch e.ID {
+		case expEntry:
+			if e.Direction != -1 {
+				t.Fatalf("expense entry direction: got %d, want -1", e.Direction)
+			}
+		case incEntry:
+			if e.Direction != 1 {
+				t.Fatalf("income entry direction: got %d, want 1", e.Direction)
+			}
+		case pending:
+			if e.Direction != 0 {
+				t.Fatalf("unclassified entry direction: got %d, want 0", e.Direction)
+			}
 		}
 	}
 }
@@ -377,7 +430,7 @@ func TestUpdateEntryCategoryCrossUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
-	entryA := mkentry(t, s, uidA, -100, "a's entry")
+	entryA := mkentry(t, s, uidA, 100, "a's entry")
 	bCat := mkcat(t, s, bID, nil, "bob餐饮", -1, 0, "")
 	// Bob tries to reclassify Alice's entry -> not found (scoped by user_id).
 	if err := s.UpdateEntryCategory(bID, entryA, &bCat); err != ErrEntryNotFound {
@@ -394,20 +447,20 @@ func TestRouteDefaultExactMatch(t *testing.T) {
 	coffee := mkcat(t, s, uid, nil, "Coffee", -1, 0, "")
 
 	// Exact match -> hits.
-	if got := classify(t, s, uid, -1990, "Coffee"); got != coffee {
+	if got := classify(t, s, uid, 1990, "Coffee"); got != coffee {
 		t.Fatalf("exact match: got %d, want %d", got, coffee)
 	}
 	// Leading/trailing whitespace is trimmed before comparing.
-	if got := classify(t, s, uid, -1990, "  Coffee  "); got != coffee {
+	if got := classify(t, s, uid, 1990, "  Coffee  "); got != coffee {
 		t.Fatalf("trimmed exact match: got %d, want %d", got, coffee)
 	}
 	// Substring (not a full match) must NOT hit -- this is exact match, not
 	// contains match.
-	if got := classify(t, s, uid, -1990, "Luckin Coffee"); got != 0 {
+	if got := classify(t, s, uid, 1990, "Luckin Coffee"); got != 0 {
 		t.Fatalf("substring must not match exact rule, got %d", got)
 	}
 	// Case-sensitive: different case must NOT hit.
-	if got := classify(t, s, uid, -1990, "coffee"); got != 0 {
+	if got := classify(t, s, uid, 1990, "coffee"); got != 0 {
 		t.Fatalf("case mismatch must not match, got %d", got)
 	}
 }
@@ -419,12 +472,12 @@ func TestRouteDefaultExactMatchMetacharsSafe(t *testing.T) {
 	s, uid := newTestStore(t)
 	cat := mkcat(t, s, uid, nil, "生活/娱乐", -1, 0, "")
 
-	if got := classify(t, s, uid, -100, "生活/娱乐"); got != cat {
+	if got := classify(t, s, uid, 100, "生活/娱乐"); got != cat {
 		t.Fatalf("literal metachar name should match itself: got %d, want %d", got, cat)
 	}
 	// If "/" were treated as a real regex alternation-adjacent operator this
 	// could misbehave; confirm an unrelated string does not match.
-	if got := classify(t, s, uid, -100, "生活娱乐"); got != 0 {
+	if got := classify(t, s, uid, 100, "生活娱乐"); got != 0 {
 		t.Fatalf("non-exact text must not match, got %d", got)
 	}
 }
@@ -440,12 +493,12 @@ func TestRouteDefaultExactMatchDeeperCategoryStillWins(t *testing.T) {
 
 	// "餐饮" exactly equals the parent's name -> parent hits (no ambiguity,
 	// child's rule is "瑞幸" which doesn't appear here).
-	if got := classify(t, s, uid, -100, "餐饮"); got != food {
+	if got := classify(t, s, uid, 100, "餐饮"); got != food {
 		t.Fatalf("root default-exact match: got %d, want %d", got, food)
 	}
 	// "瑞幸咖啡" matches the child's contains-regex; child (deeper level) wins
 	// even though it isn't an exact match of its own name.
-	if got := classify(t, s, uid, -100, "瑞幸咖啡"); got != coffee {
+	if got := classify(t, s, uid, 100, "瑞幸咖啡"); got != coffee {
 		t.Fatalf("deeper regex match should win: got %d, want %d", got, coffee)
 	}
 }

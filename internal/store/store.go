@@ -47,10 +47,6 @@ var ErrInvalidRegex = errors.New("invalid regex pattern")
 // the given user.
 var ErrEntryNotFound = errors.New("entry not found")
 
-// ErrDirectionMismatch is returned when assigning a category whose direction
-// (income/expense) disagrees with the sign of the entry's amount.
-var ErrDirectionMismatch = errors.New("category direction does not match entry")
-
 // ErrInvalidMove is returned when a category move is illegal: moving a node
 // under itself or one of its own descendants (a cycle), or under a parent of a
 // different direction (direction is immutable and must be inherited).
@@ -215,6 +211,27 @@ END;`
 	}
 	if err := s.migrateIsAdmin(); err != nil {
 		return err
+	}
+	if err := s.migrateAmountAbs(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateAmountAbs converts any legacy signed amount_cents rows to their
+// absolute (unsigned) value. Direction is no longer carried by the amount sign
+// (it is derived from the entry's category), so amounts are stored unsigned.
+// Legacy negative rows were expenses filed under expense categories, so taking
+// abs() preserves their meaning. Idempotent: a no-op once all rows are >= 0.
+// The schema CHECK stays `!= 0` (not `> 0`) so we avoid an SQLite table rebuild;
+// after this migration no negative rows remain anyway.
+func (s *Store) migrateAmountAbs() error {
+	res, err := s.db.Exec("UPDATE ledger_entries SET amount_cents = abs(amount_cents), updated_at = updated_at WHERE amount_cents < 0")
+	if err != nil {
+		return fmt.Errorf("migrate amount to unsigned: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("migrated %d ledger entries to unsigned amount_cents", n)
 	}
 	return nil
 }
@@ -648,7 +665,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 }
 
 // EntryRow is one ledger entry as shown in list views. CategoryName is empty
-// when the entry is still unclassified (category_id IS NULL).
+// when the entry is still unclassified (category_id IS NULL). Direction is the
+// entry's derived direction (1 income / -1 expense), taken from the assigned
+// category; it is 0 for an unclassified entry ("待分类", no direction). Amounts
+// are stored unsigned (absolute cents); direction is NOT carried by the sign.
 type EntryRow struct {
 	ID           int64   `json:"id"`
 	AmountCents  int64   `json:"amount_cents"`
@@ -659,6 +679,7 @@ type EntryRow struct {
 	CategoryID   *int64  `json:"category_id"`
 	CategoryName string  `json:"category_name"`
 	CategoryPath string  `json:"category_path"`
+	Direction    int     `json:"direction"` // 1 income / -1 expense / 0 unclassified
 }
 
 // ListEntries returns a page of the user's ledger entries, newest first
@@ -681,7 +702,8 @@ func (s *Store) ListEntries(userID int64, limit, offset int) ([]EntryRow, int, e
 
 	rows, err := s.db.Query(`
 SELECT e.id, e.amount_cents, e.raw_type, e.record_time,
-       COALESCE(e.note, ''), e.source, e.category_id, COALESCE(c.name, '')
+       COALESCE(e.note, ''), e.source, e.category_id, COALESCE(c.name, ''),
+       COALESCE(c.direction, 0)
 FROM ledger_entries e
 LEFT JOIN categories c ON c.id = e.category_id
 WHERE e.user_id = ?
@@ -696,7 +718,7 @@ LIMIT ? OFFSET ?`, userID, limit, offset)
 	for rows.Next() {
 		var e EntryRow
 		if err := rows.Scan(&e.ID, &e.AmountCents, &e.RawType, &e.RecordTime,
-			&e.Note, &e.Source, &e.CategoryID, &e.CategoryName); err != nil {
+			&e.Note, &e.Source, &e.CategoryID, &e.CategoryName, &e.Direction); err != nil {
 			return nil, 0, fmt.Errorf("scan entry: %w", err)
 		}
 		entries = append(entries, e)
@@ -720,12 +742,12 @@ LIMIT ? OFFSET ?`, userID, limit, offset)
 
 // UpdateEntryCategory manually (re)assigns or clears the category of one of the
 // user's entries. Pass categoryID == nil to unclassify. When a category is
-// given it must belong to the same user and its direction must match the sign
-// of the entry's amount (expense category for a negative amount, income for a
-// positive one), otherwise ErrDirectionMismatch. The entry itself must belong
-// to the user, otherwise ErrEntryNotFound.
+// given it must belong to the same user; its direction is NOT validated against
+// the amount (amounts are unsigned and direction is derived from the assigned
+// category), so a category of any direction may be attached to any entry. The
+// entry itself must belong to the user, otherwise ErrEntryNotFound.
 func (s *Store) UpdateEntryCategory(userID, entryID int64, categoryID *int64) error {
-	// Confirm the entry exists and is owned by the user; get its amount sign.
+	// Confirm the entry exists and is owned by the user.
 	var amountCents int64
 	err := s.db.QueryRow(
 		"SELECT amount_cents FROM ledger_entries WHERE id = ? AND user_id = ?",
@@ -739,25 +761,18 @@ func (s *Store) UpdateEntryCategory(userID, entryID int64, categoryID *int64) er
 	}
 
 	if categoryID != nil {
-		// Confirm the category exists, is owned by the user, and matches
-		// the entry's direction.
-		var dir int
+		// Confirm the category exists and is owned by the user. Direction is
+		// no longer checked against the amount sign.
+		var dummy int
 		err := s.db.QueryRow(
-			"SELECT direction FROM categories WHERE id = ? AND user_id = ?",
+			"SELECT 1 FROM categories WHERE id = ? AND user_id = ?",
 			*categoryID, userID,
-		).Scan(&dir)
+		).Scan(&dummy)
 		if err == sql.ErrNoRows {
 			return ErrCategoryNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("lookup category: %w", err)
-		}
-		wantDir := -1
-		if amountCents > 0 {
-			wantDir = 1
-		}
-		if dir != wantDir {
-			return ErrDirectionMismatch
 		}
 	}
 

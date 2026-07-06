@@ -849,7 +849,8 @@ type ManualEntryInput struct {
 var ErrInvalidAmount = errors.New("amount must be a positive number of cents")
 
 // ErrInvalidEntry is returned when a manual entry is missing required fields
-// (e.g. an empty raw_type/summary or record_time).
+// (empty record_time, or both raw_type/summary and category left empty so the
+// row would have no title to show).
 var ErrInvalidEntry = errors.New("entry is missing required fields")
 
 // validateManualInput enforces the shared create/update invariants and, when a
@@ -858,7 +859,13 @@ func (s *Store) validateManualInput(userID int64, in ManualEntryInput) error {
 	if in.AmountCents <= 0 {
 		return ErrInvalidAmount
 	}
-	if strings.TrimSpace(in.RawType) == "" || strings.TrimSpace(in.RecordTime) == "" {
+	if strings.TrimSpace(in.RecordTime) == "" {
+		return ErrInvalidEntry
+	}
+	// Summary is optional: when blank it falls back to the category name in the
+	// UI. But an entry with neither a summary nor a category has no title, so
+	// require at least one of them.
+	if strings.TrimSpace(in.RawType) == "" && in.CategoryID == nil {
 		return ErrInvalidEntry
 	}
 	if in.CategoryID != nil {

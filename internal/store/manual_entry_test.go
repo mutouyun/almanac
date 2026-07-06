@@ -88,7 +88,7 @@ func TestCreateManualEntryValidation(t *testing.T) {
 	}{
 		{"zero amount", ManualEntryInput{AmountCents: 0, RawType: "x", RecordTime: "2026-07-06 09:00"}, ErrInvalidAmount},
 		{"negative amount", ManualEntryInput{AmountCents: -5, RawType: "x", RecordTime: "2026-07-06 09:00"}, ErrInvalidAmount},
-		{"empty raw_type", ManualEntryInput{AmountCents: 100, RawType: "  ", RecordTime: "2026-07-06 09:00"}, ErrInvalidEntry},
+		{"empty raw_type no category", ManualEntryInput{AmountCents: 100, RawType: "  ", RecordTime: "2026-07-06 09:00"}, ErrInvalidEntry},
 		{"empty time", ManualEntryInput{AmountCents: 100, RawType: "x", RecordTime: ""}, ErrInvalidEntry},
 	}
 	for _, c := range cases {
@@ -98,6 +98,29 @@ func TestCreateManualEntryValidation(t *testing.T) {
 				t.Errorf("err = %v, want %v", err, c.want)
 			}
 		})
+	}
+}
+
+// TestCreateManualEntryBlankSummaryWithCategory: an empty summary is allowed as
+// long as a category is given (the UI falls back to the category name).
+func TestCreateManualEntryBlankSummaryWithCategory(t *testing.T) {
+	s, uid := newTestStore(t)
+	food := mkcat(t, s, uid, nil, "餐饮", -1, 0, "")
+	id, err := s.CreateManualEntry(uid, ManualEntryInput{
+		CategoryID:  &food,
+		AmountCents: 3000,
+		RawType:     "",
+		RecordTime:  "2026-07-06 12:00",
+	})
+	if err != nil {
+		t.Fatalf("create with blank summary + category: %v", err)
+	}
+	e := findEntry(t, s, uid, id)
+	if e == nil {
+		t.Fatal("entry not found")
+	}
+	if e.Direction != -1 {
+		t.Errorf("direction = %d, want -1", e.Direction)
 	}
 }
 

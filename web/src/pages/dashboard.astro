@@ -344,7 +344,7 @@ const title = '看板 · Almanac';
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
-                    <span class="font-bold text-slate-700 truncate">${e.raw_type}</span>
+                    <span class="font-bold text-slate-700 truncate">${e.raw_type || e.category_name || '未分类'}</span>
                     ${!e.category_id ? '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[10px] font-bold rounded">待分类</span>' : ''}
                   </div>
                   <div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5">

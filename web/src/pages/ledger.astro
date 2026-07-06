@@ -89,7 +89,7 @@ const title = '账本明细 · Almanac';
               <input id="f-amount" type="number" step="0.01" min="0" placeholder="0.00" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-300" />
             </div>
             <div>
-              <label class="text-xs font-medium text-slate-500 mb-1 block">摘要 / 类型</label>
+              <label class="text-xs font-medium text-slate-500 mb-1 block">摘要 / 类型（可留空，默认用分类名）</label>
               <input id="f-rawtype" type="text" placeholder="如：午餐、公司工资" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-300" />
             </div>
             <div>
@@ -293,7 +293,7 @@ const title = '账本明细 · Almanac';
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
-                <span class="font-bold text-slate-700 truncate">${esc(e.raw_type)}</span>
+                <span class="font-bold text-slate-700 truncate">${esc(e.raw_type || e.category_name || '\u672a\u5206\u7c7b')}</span>
                 ${srcBadge}
                 ${!e.category_id ? '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-600 text-[10px] font-bold rounded">\u5f85\u5206\u7c7b</span>' : ''}
               </div>
@@ -394,7 +394,7 @@ const title = '账本明细 · Almanac';
       document.getElementById('modal-save').onclick = async () => {
         const amount = parseFloat(fAmount.value);
         if (!(amount > 0)) { modalMsg.textContent = '\u91d1\u989d\u5fc5\u987b\u5927\u4e8e 0'; return; }
-        if (!fRawType.value.trim()) { modalMsg.textContent = '\u8bf7\u586b\u5199\u6458\u8981'; return; }
+        if (!fRawType.value.trim() && !fCategory.value) { modalMsg.textContent = '\u6458\u8981\u548c\u5206\u7c7b\u81f3\u5c11\u586b\u4e00\u9879'; return; }
         if (!fTime.value) { modalMsg.textContent = '\u8bf7\u9009\u62e9\u65f6\u95f4'; return; }
         // datetime-local -> "YYYY-MM-DD HH:mm" (server normalizes anyway).
         const recordTime = fTime.value.replace('T', ' ');

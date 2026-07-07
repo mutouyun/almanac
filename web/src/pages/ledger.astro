@@ -272,7 +272,7 @@ const title = '账本明细 · Almanac';
       fetch('/api/whoami')
         .then(r => { if (!r.ok) throw new Error(); return r.json(); })
         .then(() => loadCategories().then(() => { initFilters(); loadEntries(); }))
-        .catch(() => window.location.href = '/login');
+        .catch(() => window.location.href = '/login?expired=1');
 
       // ---- Categories ----
       function treeOrder(list) {

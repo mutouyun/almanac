@@ -141,7 +141,7 @@ const title = '分类管理 · Almanac';
         .then(r => r.json())
         .then(d => {
           loadCategories();
-        }).catch(() => window.location.href = '/login');
+        }).catch(() => window.location.href = '/login?expired=1');
 
       async function loadCategories() {
         const res = await fetch('/api/categories');

@@ -59,12 +59,27 @@ const title = '登录 · Almanac';
       }
       button:disabled { opacity: 0.6; cursor: default; }
       .err { color: #dc2626; font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
+      .notice {
+        display: none;
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        padding: 0.6rem 0.7rem;
+        font-size: 0.85rem;
+        margin-bottom: 1.25rem;
+      }
+      @media (prefers-color-scheme: dark) {
+        .notice { background: #422006; color: #fcd34d; border-color: #78350f; }
+      }
     </style>
   </head>
   <body>
     <form class="card" id="login-form">
       <h1>📖 Almanac</h1>
       <p class="subtitle">登录以进入账本</p>
+
+      <p class="notice" id="notice">登录状态已过期，请重新登录。</p>
 
       <label for="username">用户名</label>
       <input id="username" name="username" autocomplete="username" required />
@@ -77,6 +92,13 @@ const title = '登录 · Almanac';
     </form>
 
     <script>
+      // Show a gentle notice when redirected here after a session expiry
+      // (?expired=1), so users aren't confused about being bounced back.
+      if (new URLSearchParams(window.location.search).get('expired') === '1') {
+        const n = document.getElementById('notice');
+        if (n) n.style.display = 'block';
+      }
+
       // If already logged in, skip the form and go straight to the dashboard.
       fetch('/api/whoami').then((r) => {
         if (r.ok) window.location.replace('/dashboard');

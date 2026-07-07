@@ -251,7 +251,7 @@ const title = '看板 · Almanac';
           loadWebhookToken();
           loadCategories().then(() => { loadEntries(); loadSummary(); loadChart(); });
         })
-        .catch(() => window.location.href = '/login');
+        .catch(() => window.location.href = '/login?expired=1');
 
       // Webhook Logic
       const whUrl = document.getElementById('wh-url');

@@ -289,10 +289,31 @@ const title = '看板 · Almanac';
       }
 
       async function copyText(text, okMsg) {
+        // navigator.clipboard 仅在安全上下文(HTTPS/localhost)可用；
+        // 生产走明文 HTTP 时它是 undefined，需降级到 execCommand。
         try {
-          await navigator.clipboard.writeText(text);
-          flashMsg(okMsg);
-        } catch (e) {}
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            flashMsg(okMsg);
+            return;
+          }
+        } catch (e) { /* 落到下面的降级 */ }
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.top = '-9999px';
+          ta.setAttribute('readonly', '');
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (ok) flashMsg(okMsg);
+          else { whMsg.className = 'text-center text-[11px] text-rose-500'; whMsg.textContent = '❌ 复制失败，请手动选择'; }
+        } catch (e) {
+          whMsg.className = 'text-center text-[11px] text-rose-500';
+          whMsg.textContent = '❌ 复制失败，请手动选择';
+        }
       }
 
       document.getElementById('wh-copy').onclick = () => copyText(currentToken, '✅ 已复制 Token');

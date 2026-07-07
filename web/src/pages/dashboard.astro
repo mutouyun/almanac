@@ -165,12 +165,16 @@ const title = '看板 · Almanac';
 
         <!-- Widgets Sidebar -->
         <div class="space-y-6">
-          <!-- Webhook Settings Widget -->
-          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <i data-lucide="zap" class="text-amber-500 w-5 h-5"></i>
-              自动化同步
-            </h3>
+          <!-- Webhook Settings Widget (Collapsible) -->
+          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm group">
+            <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('wh-container').classList.toggle('hidden')">
+              <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="zap" class="text-amber-500 w-5 h-5"></i>
+                自动化同步
+              </h3>
+              <i data-lucide="chevron-down" class="w-4 h-4 text-slate-300"></i>
+            </div>
+            <div id="wh-container" class="mt-4 hidden">
             <p class="text-xs text-slate-500 leading-relaxed mb-4">让记账机器人或脚本把消费记录自动推送进来。向下面的接口发一条 <span class="font-semibold text-slate-700">POST</span> 请求即可,记得带上鉴权请求头。</p>
             <div class="space-y-4">
               <div>
@@ -207,6 +211,7 @@ const title = '看板 · Almanac';
                 <p><code class="text-slate-700">date</code> 时间,ISO 8601 格式带时区(如 <code class="text-slate-700">2026-07-05T14:30:00+08:00</code>),可留空取当前</p>
               </div>
               <p id="wh-msg" class="text-center text-[11px] min-h-[1em]"></p>
+            </div>
             </div>
           </section>
 

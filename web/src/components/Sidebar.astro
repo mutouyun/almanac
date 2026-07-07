@@ -50,7 +50,7 @@ const menuItems = [
     <a
       id="sidebar-admin-link"
       href="/admin/users"
-      hidden
+      style="display: none;"
       class={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${
         activePage === 'users'
           ? 'bg-blue-50 text-blue-600'
@@ -95,7 +95,7 @@ const menuItems = [
         role.textContent = d.is_admin ? '超级管理员' : '普通用户';
         avatar.textContent = d.username[0].toUpperCase();
         const adminLink = document.getElementById('sidebar-admin-link');
-        if (adminLink && d.is_admin) adminLink.hidden = false;
+        if (adminLink) adminLink.style.display = d.is_admin ? 'flex' : 'none';
       })
       .catch(() => {
         if (window.location.pathname !== '/login') window.location.href = '/login';

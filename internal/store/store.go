@@ -1143,6 +1143,170 @@ func (s *Store) SoftDeleteEntry(userID, entryID int64) error {
 	return nil
 }
 
+// MaxBatchIDs caps how many entry ids a single batch operation accepts, so an
+// oversized request cannot blow up the transaction or exceed SQLite's per-
+// statement variable limit (~999).
+const MaxBatchIDs = 500
+
+// ErrTooManyItems is returned when a batch request exceeds MaxBatchIDs.
+var ErrTooManyItems = errors.New("too many items in batch request")
+
+// filterOwnedEntryIDs returns the subset of ids that name a live (non-deleted)
+// entry owned by the user, preserving no particular order. It is the ownership
+// gate for every batch operation: any id not returned here is out of scope
+// (missing, deleted, or belonging to another user) and must be reported as
+// skipped rather than silently acted upon.
+func filterOwnedEntryIDs(q interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}, userID int64, ids []int64) (map[int64]bool, error) {
+	owned := make(map[int64]bool, len(ids))
+	if len(ids) == 0 {
+		return owned, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, userID)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := "SELECT id FROM ledger_entries WHERE user_id = ? AND deleted_at IS NULL AND id IN (" +
+		strings.Join(placeholders, ",") + ")"
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("filter owned entries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan owned entry id: %w", err)
+		}
+		owned[id] = true
+	}
+	return owned, rows.Err()
+}
+
+// BatchResult reports the outcome of a batch operation: how many rows were
+// affected and which requested ids were skipped (and why).
+type BatchResult struct {
+	Affected int          `json:"affected"`
+	Skipped  []SkippedItem `json:"skipped"`
+}
+
+// SkippedItem records one id that a batch operation could not act on, with a
+// short machine-friendly reason.
+type SkippedItem struct {
+	ID     int64  `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// BatchRecategorizeEntries reassigns the category of many of the user's entries
+// in a single transaction (all-or-nothing). Direction is NOT taken from the
+// client: it is derived downstream from the assigned category, exactly like the
+// single-entry path, so callers only pass ids + a target categoryID (nil to
+// unclassify). Ownership is enforced first: ids that do not name a live entry
+// owned by the user are returned in Skipped and never written. When categoryID
+// is non-nil it must belong to the user, else ErrCategoryNotFound. Passing more
+// than MaxBatchIDs ids yields ErrTooManyItems.
+func (s *Store) BatchRecategorizeEntries(userID int64, ids []int64, categoryID *int64) (BatchResult, error) {
+	if len(ids) > MaxBatchIDs {
+		return BatchResult{}, ErrTooManyItems
+	}
+	// Validate the target category belongs to the user before touching rows.
+	if categoryID != nil {
+		var dummy int
+		err := s.db.QueryRow("SELECT 1 FROM categories WHERE id = ? AND user_id = ?", *categoryID, userID).Scan(&dummy)
+		if err == sql.ErrNoRows {
+			return BatchResult{}, ErrCategoryNotFound
+		}
+		if err != nil {
+			return BatchResult{}, fmt.Errorf("lookup category: %w", err)
+		}
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("begin batch recategorize tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	owned, err := filterOwnedEntryIDs(tx, userID, ids)
+	if err != nil {
+		return BatchResult{}, err
+	}
+
+	var catVal any
+	if categoryID != nil {
+		catVal = *categoryID
+	}
+	now := time.Now().Format(time.RFC3339)
+	stmt, err := tx.Prepare("UPDATE ledger_entries SET category_id = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("prepare batch recategorize: %w", err)
+	}
+	defer stmt.Close()
+
+	res := BatchResult{}
+	for _, id := range ids {
+		if !owned[id] {
+			res.Skipped = append(res.Skipped, SkippedItem{ID: id, Reason: "not found or not owned"})
+			continue
+		}
+		if _, err := stmt.Exec(catVal, now, id, userID); err != nil {
+			return BatchResult{}, fmt.Errorf("recategorize entry %d: %w", id, err)
+		}
+		res.Affected++
+	}
+	if err := tx.Commit(); err != nil {
+		return BatchResult{}, fmt.Errorf("commit batch recategorize tx: %w", err)
+	}
+	return res, nil
+}
+
+// BatchDeleteEntries soft-deletes many of the user's entries in a single
+// transaction (all-or-nothing). Ownership is enforced first: ids that do not
+// name a live entry owned by the user are returned in Skipped and never
+// touched. Passing more than MaxBatchIDs ids yields ErrTooManyItems.
+func (s *Store) BatchDeleteEntries(userID int64, ids []int64) (BatchResult, error) {
+	if len(ids) > MaxBatchIDs {
+		return BatchResult{}, ErrTooManyItems
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("begin batch delete tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	owned, err := filterOwnedEntryIDs(tx, userID, ids)
+	if err != nil {
+		return BatchResult{}, err
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	stmt, err := tx.Prepare("UPDATE ledger_entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("prepare batch delete: %w", err)
+	}
+	defer stmt.Close()
+
+	res := BatchResult{}
+	for _, id := range ids {
+		if !owned[id] {
+			res.Skipped = append(res.Skipped, SkippedItem{ID: id, Reason: "not found or not owned"})
+			continue
+		}
+		if _, err := stmt.Exec(now, now, id, userID); err != nil {
+			return BatchResult{}, fmt.Errorf("delete entry %d: %w", id, err)
+		}
+		res.Affected++
+	}
+	if err := tx.Commit(); err != nil {
+		return BatchResult{}, fmt.Errorf("commit batch delete tx: %w", err)
+	}
+	return res, nil
+}
+
 // Category is one node in a user's category tree.
 type Category struct {
 	ID        int64  `json:"id"`

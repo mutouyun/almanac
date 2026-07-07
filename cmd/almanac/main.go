@@ -860,6 +860,108 @@ func categoryItemHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+// batchRecategorizeRequest is the body for POST /api/entries/batch/recategorize.
+// CategoryID is a pointer so an explicit null clears the category (unclassify).
+// Direction is never sent by the client: it is derived from the target category.
+type batchRecategorizeRequest struct {
+	IDs        []int64 `json:"ids"`
+	CategoryID *int64  `json:"category_id"`
+}
+
+// batchDeleteRequest is the body for POST /api/entries/batch/delete.
+type batchDeleteRequest struct {
+	IDs []int64 `json:"ids"`
+}
+
+// batchEntriesHandler routes the two batch endpoints under /api/entries/batch/:
+// recategorize (bulk change category) and delete (bulk soft-delete). Both are
+// session-authenticated and scoped to the caller's own entries; the store
+// layer enforces ownership and runs each batch in a single all-or-nothing
+// transaction.
+func batchEntriesHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		u := currentUser(st, r)
+		if u == nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
+			return
+		}
+		switch r.URL.Path {
+		case "/api/entries/batch/recategorize":
+			batchRecategorizeHandler(st, w, r, u)
+		case "/api/entries/batch/delete":
+			batchDeleteHandler(st, w, r, u)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}
+}
+
+// batchRecategorizeHandler handles POST /api/entries/batch/recategorize.
+func batchRecategorizeHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User) {
+	var req batchRecategorizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "ids must not be empty"})
+		return
+	}
+	result, err := st.BatchRecategorizeEntries(u.ID, req.IDs, req.CategoryID)
+	if err != nil {
+		switch err {
+		case store.ErrTooManyItems:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "too many items in one request"})
+		case store.ErrCategoryNotFound:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "category not found"})
+		default:
+			log.Printf("batch recategorize error: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		}
+		return
+	}
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+// batchDeleteHandler handles POST /api/entries/batch/delete.
+func batchDeleteHandler(st *store.Store, w http.ResponseWriter, r *http.Request, u *store.User) {
+	var req batchDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid request body"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "ids must not be empty"})
+		return
+	}
+	result, err := st.BatchDeleteEntries(u.ID, req.IDs)
+	if err != nil {
+		if err == store.ErrTooManyItems {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "too many items in one request"})
+			return
+		}
+		log.Printf("batch delete error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(result)
+}
+
 // requireAdmin returns the current user if they are an authenticated admin.
 // Otherwise it writes the appropriate error (401 unauthenticated / 403
 // non-admin) and returns nil, so callers can just `return` on nil.
@@ -1118,6 +1220,8 @@ func main() {
 	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 	mux.Handle("/api/entries", entriesHandler(st))
+	mux.Handle("/api/entries/batch/recategorize", batchEntriesHandler(st))
+	mux.Handle("/api/entries/batch/delete", batchEntriesHandler(st))
 	mux.Handle("/api/entries/", entryItemHandler(st))
 	mux.Handle("/api/summary", summaryHandler(st))
 	mux.Handle("/api/summary/by-category", summaryByCategoryHandler(st))

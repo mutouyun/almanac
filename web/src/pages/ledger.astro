@@ -40,6 +40,10 @@ const title = '账本明细 · Almanac';
           </div>
         </div>
         <div class="flex items-center gap-2">
+          <button id="btn-batch" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
+            <i data-lucide="list-checks" class="w-4 h-4"></i>
+            <span>批量操作</span>
+          </button>
           <button id="btn-import" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
             <i data-lucide="upload" class="w-4 h-4"></i>
             <span>导入 CSV</span>
@@ -98,6 +102,18 @@ const title = '账本明细 · Almanac';
         </div>
       </section>
 
+      <!-- Select-all bar (only shown in selection mode) -->
+      <div id="sel-bar" class="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 mb-4 flex items-center justify-between" hidden>
+        <label class="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
+          <input id="sel-all" type="checkbox" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+          <span>全选本页</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <span id="sel-summary" class="text-sm text-slate-500">已选 0 笔</span>
+          <button id="sel-exit" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-500 hover:bg-slate-50 transition-all">退出选择</button>
+        </div>
+      </div>
+
       <!-- Entries table -->
       <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div id="entries-loading" class="p-12 text-center text-slate-400">
@@ -134,6 +150,58 @@ const title = '账本明细 · Almanac';
           </div>
         </div>
       </section>
+
+      <!-- Floating batch action bar (selection mode, when >=1 selected) -->
+      <div id="batch-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 ml-32 z-30 bg-white rounded-2xl shadow-xl border border-slate-200 px-5 py-3 flex items-center gap-4" hidden>
+        <span id="batch-count" class="text-sm font-medium text-slate-700">已选 0 笔 · 合计 ¥0.00</span>
+        <div class="flex items-center gap-2">
+          <button id="batch-recat" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-40">
+            <i data-lucide="folder-tree" class="w-4 h-4"></i><span>改分类</span>
+          </button>
+          <button id="batch-del" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-40">
+            <i data-lucide="trash-2" class="w-4 h-4"></i><span>删除</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Batch recategorize modal -->
+      <div id="brecat-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 items-center justify-center p-4" hidden>
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+          <div class="flex justify-between items-center mb-5">
+            <h3 class="text-lg font-bold text-slate-800">批量改分类</h3>
+            <button id="brecat-close" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+          </div>
+          <div class="space-y-4">
+            <p class="text-sm text-slate-500">将为 <span id="brecat-count" class="font-bold text-slate-700">0</span> 笔账目设置新分类。</p>
+            <div>
+              <label class="text-xs font-medium text-slate-500 mb-1 block">目标分类</label>
+              <select id="brecat-cat" class="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-blue-300"></select>
+            </div>
+            <p class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">⚠️ 方向将按新分类自动调整，跨方向改分类会翻转收/支属性，可能影响本月汇总。</p>
+            <p id="brecat-msg" class="text-center text-xs text-rose-500 min-h-[1em]"></p>
+            <div class="flex gap-3 pt-1">
+              <button id="brecat-cancel" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-xl transition-all">取消</button>
+              <button id="brecat-confirm" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all">确认</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Batch delete confirm modal -->
+      <div id="bdel-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 items-center justify-center p-4" hidden>
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center">
+          <div class="w-12 h-12 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto mb-4">
+            <i data-lucide="trash-2" class="w-6 h-6"></i>
+          </div>
+          <h3 class="text-lg font-bold text-slate-800 mb-2">确认批量删除？</h3>
+          <p id="bdel-desc" class="text-sm text-slate-500 mb-5">将删除 0 笔，合计 ¥0.00，不可恢复。</p>
+          <p id="bdel-msg" class="text-center text-xs text-rose-500 min-h-[1em] mb-2"></p>
+          <div class="flex gap-3">
+            <button id="bdel-cancel" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-xl transition-all">取消</button>
+            <button id="bdel-confirm" class="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold rounded-xl transition-all">删除</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Create/Edit Modal -->
       <div id="modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 items-center justify-center p-4" hidden>
@@ -266,6 +334,8 @@ const title = '账本明细 · Almanac';
       let catsIncome = [];
       let editingId = null; // null = create mode
       let deletingId = null;
+      let selectMode = false;        // batch selection mode on/off
+      const selected = new Set();    // selected entry ids (numbers)
 
       // Render static icons present in the initial markup.
       window.lucide?.createIcons();
@@ -490,6 +560,7 @@ const title = '账本明细 · Almanac';
           elList.innerHTML = data.entries.map(renderRow).join('');
           window.lucide?.createIcons();
           bindRowActions();
+          if (selectMode) syncSelectionUI();
           renderPager();
         } catch (e) {
           elLoading.textContent = '\u274c \u52a0\u8f7d\u5931\u8d25';
@@ -510,6 +581,7 @@ const title = '账本明细 · Almanac';
           : '';
         return `
           <div class="px-6 py-4 flex items-center gap-4 transition-colors ${bg}">
+            <input type="checkbox" class="row-check w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0 ${selectMode ? '' : 'hidden'}" data-id="${e.id}" ${selected.has(e.id) ? 'checked' : ''} />
             <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconTint}">
               <i data-lucide="${icon}" class="w-5 h-5"></i>
             </div>
@@ -526,7 +598,7 @@ const title = '账本明细 · Almanac';
               </div>
             </div>
             <div class="font-bold ${amtColor} shrink-0">${sign}${fmtYuan(e.amount_cents)}</div>
-            <div class="flex items-center gap-1 shrink-0">
+            <div class="row-actions flex items-center gap-1 shrink-0 ${selectMode ? 'hidden' : ''}">
               <button class="row-edit inline-flex items-center gap-1 px-2.5 py-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u7f16\u8f91"><i data-lucide="pencil" class="w-3.5 h-3.5"></i><span>\u7f16\u8f91</span></button>
               <button class="row-del inline-flex items-center gap-1 px-2.5 py-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg text-xs font-medium transition-all" data-id="${e.id}" title="\u5220\u9664"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i><span>\u5220\u9664</span></button>
             </div>
@@ -542,7 +614,140 @@ const title = '账本明细 · Almanac';
         document.querySelectorAll('.row-del').forEach(b => {
           b.onclick = () => openDelete(Number(b.dataset.id));
         });
+        document.querySelectorAll('.row-check').forEach(cb => {
+          cb.onchange = () => {
+            const id = Number(cb.dataset.id);
+            if (cb.checked) selected.add(id); else selected.delete(id);
+            syncSelectionUI();
+          };
+        });
       }
+
+      // ---- Batch selection ----
+      // syncSelectionUI refreshes the select-all checkbox, floating bar count
+      // and total, and enables/disables the action buttons.
+      function syncSelectionUI() {
+        const ids = rowCache.map(e => e.id);
+        const allChecked = ids.length > 0 && ids.every(id => selected.has(id));
+        const selAll = document.getElementById('sel-all');
+        if (selAll) {
+          selAll.checked = allChecked;
+          selAll.indeterminate = !allChecked && ids.some(id => selected.has(id));
+        }
+        const n = selected.size;
+        // Sum signed amounts of selected rows currently on the page for the
+        // confirm anchor (cross-page selection is not offered).
+        let cents = 0;
+        for (const e of rowCache) {
+          if (!selected.has(e.id)) continue;
+          const dir = e.direction || 0;
+          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : 0);
+        }
+        const sumText = (cents < 0 ? '-' : '') + fmtYuan(cents);
+        document.getElementById('sel-summary').textContent = `已选 ${n} 笔`;
+        document.getElementById('batch-count').textContent = `已选 ${n} 笔 · 合计 ${sumText}`;
+        const bar = document.getElementById('batch-bar');
+        bar.hidden = n === 0;
+        if (n === 0) bar.classList.remove('flex'); else bar.classList.add('flex');
+        document.getElementById('batch-recat').disabled = n === 0;
+        document.getElementById('batch-del').disabled = n === 0;
+      }
+
+      // enterSelectMode / exitSelectMode toggle the row checkboxes + bars.
+      function enterSelectMode() {
+        selectMode = true;
+        selected.clear();
+        document.getElementById('sel-bar').hidden = false;
+        loadEntries();
+      }
+      function exitSelectMode() {
+        selectMode = false;
+        selected.clear();
+        document.getElementById('sel-bar').hidden = true;
+        const bar = document.getElementById('batch-bar');
+        bar.hidden = true; bar.classList.remove('flex');
+        loadEntries();
+      }
+
+      document.getElementById('btn-batch').onclick = () => { selectMode ? exitSelectMode() : enterSelectMode(); };
+      document.getElementById('sel-exit').onclick = exitSelectMode;
+      document.getElementById('sel-all').onchange = (e) => {
+        for (const row of rowCache) {
+          if (e.target.checked) selected.add(row.id); else selected.delete(row.id);
+        }
+        document.querySelectorAll('.row-check').forEach(cb => { cb.checked = e.target.checked; });
+        syncSelectionUI();
+      };
+
+      // ---- Batch recategorize ----
+      const brecatModal = document.getElementById('brecat-modal');
+      document.getElementById('batch-recat').onclick = () => {
+        if (selected.size === 0) return;
+        document.getElementById('brecat-count').textContent = selected.size;
+        document.getElementById('brecat-cat').innerHTML = catOptions(null);
+        document.getElementById('brecat-msg').textContent = '';
+        showModal(brecatModal);
+      };
+      document.getElementById('brecat-close').onclick = () => hideModal(brecatModal);
+      document.getElementById('brecat-cancel').onclick = () => hideModal(brecatModal);
+      brecatModal.onclick = (e) => { if (e.target === brecatModal) hideModal(brecatModal); };
+      document.getElementById('brecat-confirm').onclick = async () => {
+        const catVal = document.getElementById('brecat-cat').value;
+        const btn = document.getElementById('brecat-confirm');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/entries/batch/recategorize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [...selected], category_id: catVal ? Number(catVal) : null }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { document.getElementById('brecat-msg').textContent = '❌ ' + (data.error || '操作失败'); return; }
+          hideModal(brecatModal);
+          const skipped = (data.skipped && data.skipped.length) || 0;
+          alert(`成功改 ${data.affected} 笔${skipped ? `，跳过 ${skipped} 笔` : ''}。`);
+          exitSelectMode();
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      // ---- Batch delete ----
+      const bdelModal = document.getElementById('bdel-modal');
+      document.getElementById('batch-del').onclick = () => {
+        if (selected.size === 0) return;
+        let cents = 0;
+        for (const e of rowCache) {
+          if (!selected.has(e.id)) continue;
+          const dir = e.direction || 0;
+          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : 0);
+        }
+        const sumText = (cents < 0 ? '-' : '') + fmtYuan(cents);
+        document.getElementById('bdel-desc').textContent = `将删除 ${selected.size} 笔，合计 ${sumText}，不可恢复。`;
+        document.getElementById('bdel-msg').textContent = '';
+        showModal(bdelModal);
+      };
+      document.getElementById('bdel-cancel').onclick = () => hideModal(bdelModal);
+      bdelModal.onclick = (e) => { if (e.target === bdelModal) hideModal(bdelModal); };
+      document.getElementById('bdel-confirm').onclick = async () => {
+        const btn = document.getElementById('bdel-confirm');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/entries/batch/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: [...selected] }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { document.getElementById('bdel-msg').textContent = '❌ ' + (data.error || '删除失败'); return; }
+          hideModal(bdelModal);
+          const skipped = (data.skipped && data.skipped.length) || 0;
+          alert(`已删除 ${data.affected} 笔${skipped ? `，跳过 ${skipped} 笔` : ''}。`);
+          exitSelectMode();
+        } finally {
+          btn.disabled = false;
+        }
+      };
 
       function renderPager() {
         const from = offset + 1;

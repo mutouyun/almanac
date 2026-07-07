@@ -47,6 +47,19 @@ const menuItems = [
       <span>统计报表</span>
       <span class="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 ml-auto">TBD</span>
     </a>
+    <a
+      id="sidebar-admin-link"
+      href="/admin/users"
+      hidden
+      class={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${
+        activePage === 'users'
+          ? 'bg-blue-50 text-blue-600'
+          : 'text-slate-600 hover:bg-slate-50'
+      }`}
+    >
+      <i data-lucide="users" class="w-5 h-5"></i>
+      <span>账户管理</span>
+    </a>
   </nav>
 
   <div class="p-4 border-t border-slate-100">
@@ -81,6 +94,8 @@ const menuItems = [
         name.textContent = d.username;
         role.textContent = d.is_admin ? '超级管理员' : '普通用户';
         avatar.textContent = d.username[0].toUpperCase();
+        const adminLink = document.getElementById('sidebar-admin-link');
+        if (adminLink && d.is_admin) adminLink.hidden = false;
       })
       .catch(() => {
         if (window.location.pathname !== '/login') window.location.href = '/login';

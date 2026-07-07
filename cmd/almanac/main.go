@@ -88,6 +88,11 @@ func loginHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
+		// Best-effort login-time stamp; a failure here must not block login.
+		if err := st.UpdateLastLogin(u.ID); err != nil {
+			log.Printf("failed to update last_login_at for user %d: %v", u.ID, err)
+		}
+
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookie,
 			Value:    token,

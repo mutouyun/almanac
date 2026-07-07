@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     webhook_token TEXT NOT NULL UNIQUE,
     is_admin      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    last_login_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -219,6 +220,9 @@ END;`
 	if err := s.migrateSoftDelete(); err != nil {
 		return err
 	}
+	if err := s.migrateLastLogin(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -253,6 +257,40 @@ func (s *Store) migrateSoftDelete() error {
 	}
 	if _, err := s.db.Exec("ALTER TABLE ledger_entries ADD COLUMN deleted_at TEXT"); err != nil {
 		return fmt.Errorf("add deleted_at column: %w", err)
+	}
+	return nil
+}
+
+// migrateLastLogin adds the users.last_login_at column on databases created
+// before login-time tracking existed. NULL means the user has never logged in
+// since the feature shipped. Idempotent: a no-op once the column is present.
+func (s *Store) migrateLastLogin() error {
+	rows, err := s.db.Query("PRAGMA table_info(users)")
+	if err != nil {
+		return fmt.Errorf("inspect users columns: %w", err)
+	}
+	defer rows.Close()
+	hasCol := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan column info: %w", err)
+		}
+		if name == "last_login_at" {
+			hasCol = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate column info: %w", err)
+	}
+	if hasCol {
+		return nil
+	}
+	if _, err := s.db.Exec("ALTER TABLE users ADD COLUMN last_login_at TEXT"); err != nil {
+		return fmt.Errorf("add last_login_at column: %w", err)
 	}
 	return nil
 }
@@ -545,15 +583,16 @@ func (s *Store) UserByWebhookToken(token string) (*User, error) {
 
 // UserInfo is a user summary for the admin account-management list (no secrets).
 type UserInfo struct {
-	ID        int64  `json:"id"`
-	Username  string `json:"username"`
-	IsAdmin   bool   `json:"is_admin"`
-	CreatedAt string `json:"created_at"`
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	IsAdmin     bool   `json:"is_admin"`
+	CreatedAt   string `json:"created_at"`
+	LastLoginAt string `json:"last_login_at"` // empty string when never logged in
 }
 
 // ListUsers returns all accounts (admin-only view), oldest first.
 func (s *Store) ListUsers() ([]UserInfo, error) {
-	rows, err := s.db.Query("SELECT id, username, is_admin, created_at FROM users ORDER BY id ASC")
+	rows, err := s.db.Query("SELECT id, username, is_admin, created_at, COALESCE(last_login_at, '') FROM users ORDER BY id ASC")
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -561,7 +600,7 @@ func (s *Store) ListUsers() ([]UserInfo, error) {
 	users := make([]UserInfo, 0, 8)
 	for rows.Next() {
 		var u UserInfo
-		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.CreatedAt, &u.LastLoginAt); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		users = append(users, u)
@@ -570,6 +609,18 @@ func (s *Store) ListUsers() ([]UserInfo, error) {
 		return nil, fmt.Errorf("iterate users: %w", err)
 	}
 	return users, nil
+}
+
+// UpdateLastLogin stamps users.last_login_at with the current time.
+func (s *Store) UpdateLastLogin(userID int64) error {
+	_, err := s.db.Exec(
+		"UPDATE users SET last_login_at = ? WHERE id = ?",
+		time.Now().Format(time.RFC3339), userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update last_login_at: %w", err)
+	}
+	return nil
 }
 
 // CreateUser provisions a new non-admin account: bcrypt-hashed password, a

@@ -1,6 +1,7 @@
 ---
-// Almanac account management page (admin only).
+// Almanac account management page (admin only) - Visual Overhaul.
 // Client-side guard: /api/whoami must return is_admin=true, else redirect.
+import Sidebar from '../../components/Sidebar.astro';
 const title = '账户管理 · Almanac';
 ---
 
@@ -10,179 +11,211 @@ const title = '账户管理 · Almanac';
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <script is:inline src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
     <style>
-      :root { color-scheme: light dark; }
-      body {
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        max-width: 48rem;
-        margin: 3rem auto;
-        padding: 0 1.5rem;
-        line-height: 1.6;
+      @font-face {
+        font-family: 'Geist';
+        src: url('https://cdn.jsdelivr.net/gh/vercel/geist-font@1.0.0/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
       }
-      header {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        border-bottom: 1px solid #8883;
-        padding-bottom: 1rem;
-      }
-      h1 { font-size: 1.6rem; margin: 0; }
-      a { color: #2563eb; text-decoration: none; }
-      .card {
-        border: 1px solid #8883;
-        border-radius: 12px;
-        padding: 1.25rem 1.5rem;
-        margin-top: 2rem;
-      }
-      .muted { color: #888; }
-      #gate { color: #888; }
-      .user-row {
-        display: flex;
-        align-items: center;
-        gap: 0.6rem;
-        padding: 0.7rem 0;
-        border-top: 1px solid #8882;
-      }
-      .user-row:first-child { border-top: none; }
-      .u-name { font-weight: 500; }
-      .u-badge {
-        font-size: 0.7rem;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        border: 1px solid #8884;
-        color: #888;
-      }
-      .u-badge.admin { color: #d97706; border-color: #d9770655; }
-      .u-time { font-size: 0.78rem; color: #888; }
-      .u-actions { margin-left: auto; display: flex; gap: 0.4rem; }
-      .u-actions button {
-        font-size: 0.75rem;
-        padding: 0.25rem 0.7rem;
-        border: 1px solid #8884;
-        background: transparent;
-        color: inherit;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-      .u-actions button:disabled { opacity: 0.4; cursor: default; }
-      form.add-form { margin-top: 1.2rem; display: grid; gap: 0.6rem; max-width: 22rem; }
-      form.add-form label { font-size: 0.8rem; color: #888; }
-      form.add-form input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 0.5rem 0.7rem;
-        border: 1px solid #8884;
-        border-radius: 8px;
-        font-size: 0.95rem;
-        background: Field;
-        color: FieldText;
-      }
-      form.add-form button {
-        justify-self: start;
-        padding: 0.55rem 1.1rem;
-        border: none;
-        border-radius: 8px;
-        background: #2563eb;
-        color: #fff;
-        cursor: pointer;
-      }
-      .msg { font-size: 0.85rem; min-height: 1.2em; }
-      .msg.ok { color: #16a34a; }
-      .msg.err { color: #dc2626; }
+      body { font-family: 'Geist', system-ui, -apple-system, sans-serif; }
+      dialog::backdrop { background: rgba(15, 23, 42, 0.5); backdrop-filter: blur(4px); }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
     </style>
   </head>
-  <body>
-    <div id="gate">加载中…</div>
-    <div id="app" hidden>
-      <header>
-        <h1>👤 账户管理</h1>
-        <a href="/dashboard">← 返回看板</a>
-      </header>
-
-      <div class="card">
-        <strong>账户列表</strong>
-        <p class="muted">管理员账户不可删除。删除账户会永久移除该用户的全部账本数据。</p>
-        <div id="user-list"></div>
-      </div>
-
-      <div class="card">
-        <strong>➕ 新建账户</strong>
-        <form class="add-form" id="add-form">
-          <div>
-            <label for="u-username">用户名</label>
-            <input id="u-username" type="text" required autocomplete="off" />
-          </div>
-          <div>
-            <label for="u-password">初始密码（至少 6 位）</label>
-            <input id="u-password" type="text" required autocomplete="off" />
-          </div>
-          <button type="submit" id="add-btn">创建</button>
-          <p class="msg" id="add-msg"></p>
-        </form>
+  <body class="bg-slate-50 text-slate-900 min-h-screen flex">
+    <!-- Gate: shown until admin check passes -->
+    <div id="gate" class="flex-1 flex items-center justify-center text-slate-400">
+      <div class="animate-pulse flex items-center gap-3">
+        <i data-lucide="loader" class="w-5 h-5"></i>
+        <span>正在验证权限…</span>
       </div>
     </div>
+
+    <!-- App: revealed for admins -->
+    <div id="app" class="flex-1 flex" hidden>
+      <Sidebar activePage="users" />
+
+      <main class="flex-1 ml-64 p-8 max-w-5xl">
+        <header class="flex justify-between items-end mb-8">
+          <div>
+            <h1 class="text-3xl font-bold text-slate-800 tracking-tight">账户管理 👥</h1>
+            <p class="text-slate-500 mt-1">管理系统账户，掌握每个成员的活跃状态。</p>
+          </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <!-- User List -->
+          <div class="lg:col-span-2 space-y-6">
+            <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-800">
+                <i data-lucide="users" class="text-blue-500 w-5 h-5"></i>
+                账户列表
+              </div>
+              <div id="list-loading" class="p-12 text-center text-slate-400">
+                <div class="animate-pulse flex flex-col items-center">
+                  <div class="h-8 w-8 bg-slate-100 rounded-full mb-3"></div>
+                  <div class="h-2 w-24 bg-slate-100 rounded"></div>
+                </div>
+              </div>
+              <div id="user-list" class="divide-y divide-slate-50" hidden></div>
+              <div id="list-error" class="p-12 text-center text-sm text-rose-400" hidden>加载失败</div>
+            </section>
+            <p class="text-xs text-slate-400 flex items-center gap-1.5">
+              <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+              管理员账户不可删除。删除账户会永久移除该用户的全部账本数据。
+            </p>
+          </div>
+
+          <!-- Add Account Form -->
+          <div class="space-y-6">
+            <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm sticky top-8">
+              <h3 class="font-bold text-slate-800 mb-6 flex items-center gap-2">
+                <i data-lucide="user-plus" class="text-emerald-500 w-5 h-5"></i>
+                新建账户
+              </h3>
+              <form id="add-form" class="space-y-4">
+                <div class="space-y-1">
+                  <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">用户名</label>
+                  <input id="u-username" type="text" required autocomplete="off" placeholder="如：xizi" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:border-blue-300 transition-all" />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">初始密码（至少 6 位）</label>
+                  <input id="u-password" type="text" required autocomplete="off" placeholder="至少 6 位" class="w-full px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm focus:outline-none focus:border-blue-300 transition-all" />
+                </div>
+                <button type="submit" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-100 transition-all transform active:scale-[0.98]">
+                  创建账户
+                </button>
+                <p id="add-msg" class="text-center text-[11px] min-h-[1em]"></p>
+              </form>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Reset Password Dialog -->
+    <dialog id="pw-dialog" class="bg-white rounded-3xl p-8 shadow-2xl max-w-sm w-full border border-slate-100">
+      <h3 class="text-xl font-bold text-slate-800 mb-2">重置密码</h3>
+      <p class="text-sm text-slate-500 mb-6">为账户 <span id="pw-user" class="font-semibold text-slate-700"></span> 设置新密码，该用户需用新密码重新登录。</p>
+      <input type="hidden" id="pw-id" />
+      <div class="space-y-1">
+        <label class="text-[11px] font-bold text-slate-400 uppercase">新密码（至少 6 位）</label>
+        <input id="pw-new" type="text" autocomplete="off" class="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm outline-none focus:border-blue-300" />
+      </div>
+      <p id="pw-msg" class="text-center text-[11px] min-h-[1em] mt-2"></p>
+      <div class="flex gap-3 mt-4">
+        <button id="pw-cancel" class="flex-1 py-2 text-slate-400 font-bold hover:bg-slate-50 rounded-xl transition-all">取消</button>
+        <button id="pw-save" class="flex-1 py-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100">确认重置</button>
+      </div>
+    </dialog>
+
+    <!-- Delete Confirm Dialog -->
+    <dialog id="del-dialog" class="bg-white rounded-3xl p-8 shadow-2xl max-w-sm w-full border border-slate-100">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center">
+          <i data-lucide="trash-2" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-xl font-bold text-slate-800">删除账户</h3>
+      </div>
+      <p class="text-sm text-slate-500 mb-6">确定删除账户 <span id="del-user" class="font-semibold text-rose-600"></span>？该用户的所有账本数据将被永久删除，不可恢复。</p>
+      <input type="hidden" id="del-id" />
+      <div class="flex gap-3">
+        <button id="del-cancel" class="flex-1 py-2 text-slate-400 font-bold hover:bg-slate-50 rounded-xl transition-all">取消</button>
+        <button id="del-confirm" class="flex-1 py-2 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 transition-all shadow-lg shadow-rose-100">确认删除</button>
+      </div>
+    </dialog>
+
     <script>
       const gate = document.getElementById('gate');
       const app = document.getElementById('app');
       const userList = document.getElementById('user-list');
+      const listLoading = document.getElementById('list-loading');
+      const listError = document.getElementById('list-error');
       const addForm = document.getElementById('add-form');
       const addMsg = document.getElementById('add-msg');
 
-      let meId = 0;
-
       // Guard: must be logged in AND admin.
       fetch('/api/whoami')
-        .then((r) => {
-          if (!r.ok) throw new Error('unauthorized');
-          return r.json();
-        })
+        .then((r) => { if (!r.ok) throw new Error('unauthorized'); return r.json(); })
         .then((d) => {
           if (!d.is_admin) { window.location.replace('/dashboard'); return; }
           gate.hidden = true;
           app.hidden = false;
+          window.lucide?.createIcons();
           loadUsers();
         })
         .catch(() => { window.location.href = '/login'; });
 
+      // Format an RFC3339 timestamp into a compact local string.
+      function fmtTime(s) {
+        if (!s) return '';
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return s;
+        const p = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      }
+
       async function loadUsers() {
+        listError.hidden = true;
         try {
           const res = await fetch('/api/users');
           if (!res.ok) throw new Error('failed');
           const data = await res.json();
           renderUsers(data.users || []);
         } catch (e) {
-          userList.innerHTML = '<div class="msg err">加载失败</div>';
+          listLoading.hidden = true;
+          userList.hidden = true;
+          listError.hidden = false;
         }
       }
 
       function renderUsers(users) {
+        listLoading.hidden = true;
+        userList.hidden = false;
         userList.innerHTML = users.map((u) => {
           const badge = u.is_admin
-            ? '<span class="u-badge admin">管理员</span>'
-            : '<span class="u-badge">普通</span>';
+            ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100">管理员</span>'
+            : '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-100">普通</span>';
+          const avatarLetter = escapeHTML((u.username[0] || '?').toUpperCase());
+          const avatarColor = u.is_admin ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600';
+          const lastLogin = u.last_login_at
+            ? `<span class="inline-flex items-center gap-1 text-emerald-600"><i data-lucide="log-in" class="w-3.5 h-3.5"></i>${escapeHTML(fmtTime(u.last_login_at))}</span>`
+            : '<span class="inline-flex items-center gap-1 text-slate-300"><i data-lucide="minus" class="w-3.5 h-3.5"></i>从未登录</span>';
           const delBtn = u.is_admin
-            ? '<button disabled title="管理员不可删除">删</button>'
-            : `<button onclick="deleteUser(${u.id}, '${escapeAttr(u.username)}')">删</button>`;
-          return `<div class="user-row">
-            <span class="u-name">${escapeHTML(u.username)}</span>
-            ${badge}
-            <span class="u-time">${escapeHTML(u.created_at)}</span>
-            <div class="u-actions">
-              <button onclick="resetPassword(${u.id}, '${escapeAttr(u.username)}')">改密</button>
+            ? '<button disabled title="管理员不可删除" class="p-2 rounded-lg text-slate-200 cursor-not-allowed"><i data-lucide="trash-2" class="w-4 h-4"></i></button>'
+            : `<button title="删除" onclick="askDelete(${u.id}, '${escapeAttr(u.username)}')" class="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+          return `<div class="px-6 py-4 flex items-center gap-4 hover:bg-slate-50/60 transition-colors">
+            <div class="w-10 h-10 rounded-full ${avatarColor} flex items-center justify-center font-bold text-sm shrink-0">${avatarLetter}</div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-slate-800 truncate">${escapeHTML(u.username)}</span>
+                ${badge}
+              </div>
+              <div class="flex items-center gap-4 text-[11px] text-slate-400 mt-1">
+                <span class="inline-flex items-center gap-1"><i data-lucide="calendar-plus" class="w-3.5 h-3.5"></i>${escapeHTML(fmtTime(u.created_at))}</span>
+                ${lastLogin}
+              </div>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button title="改密" onclick="askReset(${u.id}, '${escapeAttr(u.username)}')" class="p-2 rounded-lg text-slate-400 hover:text-blue-500 hover:bg-blue-50 transition-all"><i data-lucide="key-round" class="w-4 h-4"></i></button>
               ${delBtn}
             </div>
           </div>`;
         }).join('');
+        window.lucide?.createIcons();
       }
 
+      // ---- Create account ----
       addForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        addMsg.className = 'msg';
+        addMsg.className = 'text-center text-[11px] min-h-[1em]';
         addMsg.textContent = '';
         const username = document.getElementById('u-username').value.trim();
         const password = document.getElementById('u-password').value;
         if (password.length < 6) {
-          addMsg.className = 'msg err';
+          addMsg.className = 'text-center text-[11px] min-h-[1em] text-rose-500';
           addMsg.textContent = '初始密码至少 6 位';
           return;
         }
@@ -197,41 +230,74 @@ const title = '账户管理 · Almanac';
             throw new Error(data.error === 'username already taken' ? '用户名已存在'
               : data.error === 'password too short' ? '密码至少 6 位' : '创建失败');
           }
-          addMsg.className = 'msg ok';
+          addMsg.className = 'text-center text-[11px] min-h-[1em] text-emerald-600';
           addMsg.textContent = `✅ 账户「${username}」创建成功`;
           addForm.reset();
           setTimeout(() => { addMsg.textContent = ''; }, 2500);
           loadUsers();
         } catch (err) {
-          addMsg.className = 'msg err';
+          addMsg.className = 'text-center text-[11px] min-h-[1em] text-rose-500';
           addMsg.textContent = err.message;
         }
       });
 
-      window.deleteUser = function (id, name) {
-        if (!confirm(`确定删除账户「${name}」？该用户的所有账本数据将永久删除。`)) return;
-        fetch(`/api/users/${id}`, { method: 'DELETE' })
-          .then((r) => {
-            if (r.status === 400) { alert('管理员账户不可删除'); return Promise.reject(); }
-            return r.ok ? loadUsers() : Promise.reject();
-          })
-          .catch(() => {});
+      // ---- Reset password (dialog) ----
+      const pwDialog = document.getElementById('pw-dialog');
+      const pwUser = document.getElementById('pw-user');
+      const pwId = document.getElementById('pw-id');
+      const pwNew = document.getElementById('pw-new');
+      const pwMsg = document.getElementById('pw-msg');
+      window.askReset = function (id, name) {
+        pwId.value = id;
+        pwUser.textContent = name;
+        pwNew.value = '';
+        pwMsg.textContent = '';
+        pwDialog.showModal();
+      };
+      document.getElementById('pw-cancel').onclick = () => pwDialog.close();
+      document.getElementById('pw-save').onclick = async () => {
+        const pw = pwNew.value;
+        pwMsg.className = 'text-center text-[11px] min-h-[1em] mt-2';
+        if (pw.length < 6) {
+          pwMsg.className = 'text-center text-[11px] min-h-[1em] mt-2 text-rose-500';
+          pwMsg.textContent = '密码至少 6 位';
+          return;
+        }
+        try {
+          const res = await fetch(`/api/users/${pwId.value}/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_password: pw }),
+          });
+          if (!res.ok) throw new Error('重置失败');
+          pwDialog.close();
+        } catch (err) {
+          pwMsg.className = 'text-center text-[11px] min-h-[1em] mt-2 text-rose-500';
+          pwMsg.textContent = err.message;
+        }
       };
 
-      window.resetPassword = function (id, name) {
-        const pw = prompt(`为账户「${name}」设置新密码（至少 6 位）：`);
-        if (pw === null) return;
-        if (pw.length < 6) { alert('密码至少 6 位'); return; }
-        fetch(`/api/users/${id}/reset-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ new_password: pw }),
-        })
-          .then((r) => {
-            if (r.ok) { alert(`✅ 已重置「${name}」的密码，该用户需用新密码重新登录`); }
-            else alert('重置失败');
-          })
-          .catch(() => alert('重置失败'));
+      // ---- Delete account (dialog) ----
+      const delDialog = document.getElementById('del-dialog');
+      const delUser = document.getElementById('del-user');
+      const delId = document.getElementById('del-id');
+      window.askDelete = function (id, name) {
+        delId.value = id;
+        delUser.textContent = name;
+        delDialog.showModal();
+      };
+      document.getElementById('del-cancel').onclick = () => delDialog.close();
+      document.getElementById('del-confirm').onclick = async () => {
+        try {
+          const res = await fetch(`/api/users/${delId.value}`, { method: 'DELETE' });
+          if (res.status === 400) { delDialog.close(); alert('管理员账户不可删除'); return; }
+          if (!res.ok) throw new Error();
+          delDialog.close();
+          loadUsers();
+        } catch (e) {
+          delDialog.close();
+          alert('删除失败');
+        }
       };
 
       function escapeHTML(s) {

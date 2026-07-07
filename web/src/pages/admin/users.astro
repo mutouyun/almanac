@@ -25,19 +25,21 @@ const title = '账户管理 · Almanac';
     </style>
   </head>
   <body class="bg-slate-50 text-slate-900 min-h-screen flex">
-    <!-- Gate: shown until admin check passes -->
-    <div id="gate" class="flex-1 flex items-center justify-center text-slate-400">
-      <div class="animate-pulse flex items-center gap-3">
-        <i data-lucide="loader" class="w-5 h-5"></i>
-        <span>正在验证权限…</span>
+    <!-- Sidebar -->
+    <Sidebar activePage="users" />
+
+    <!-- Main Content -->
+    <main class="flex-1 ml-64 p-8 max-w-5xl">
+      <!-- Gate: shown until admin check passes -->
+      <div id="gate" class="flex items-center justify-center text-slate-400 py-32">
+        <div class="animate-pulse flex items-center gap-3">
+          <i data-lucide="loader" class="w-5 h-5"></i>
+          <span>正在验证权限…</span>
+        </div>
       </div>
-    </div>
 
-    <!-- App: revealed for admins -->
-    <div id="app" class="flex-1 flex" hidden>
-      <Sidebar activePage="users" />
-
-      <main class="flex-1 ml-64 p-8 max-w-5xl">
+      <!-- App content: revealed for admins -->
+      <div id="app" hidden>
         <header class="flex justify-between items-end mb-8">
           <div>
             <h1 class="text-3xl font-bold text-slate-800 tracking-tight">账户管理 👥</h1>
@@ -92,8 +94,8 @@ const title = '账户管理 · Almanac';
             </section>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
 
     <!-- Reset Password Dialog -->
     <dialog id="pw-dialog" class="bg-white rounded-3xl p-8 shadow-2xl max-w-sm w-full border border-slate-100">

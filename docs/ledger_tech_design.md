@@ -1,4 +1,4 @@
-# Almanac Ledger 技术概要设计文档 v1.3
+# Almanac Ledger 技术概要设计文档 v1.5
 
 > 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.5)、`docs/ledger_data_model.md` (v2.9)
 > 本文承接需求、交互与数据模型，定义系统的技术实现骨架：整体架构、关键查询、路由引擎、鉴权安全、API 端点与非功能落地。**不重复数据模型的表结构定义**（见数据模型文档），仅引用并补充实现细节。
@@ -305,7 +305,7 @@ flowchart TD
 
 ### 5.6 并发写入与事务
 - **SQLite WAL 模式**：见 §7.3，多个读并发 + 一个写并发。
-- **CSV 导入事务**：整批用一个 `BEGIN ... COMMIT` 包裹，失败回滚。去重比对在事务内完成（与批次开始前的存量比对，防误拦文件内合法重复）。
+- **CSV 导入事务**：整批用一个 `BEGIN ... COMMIT` 包裹，失败回滚。**本导入器不做自动去重**——「毛线记账本」等来源导出的 CSV 无稳定交易单号，弱去重（时间+金额）易误伤合法的同分钟同额记录，故一期不做，改由「预览→确认」两步让用户核对把关（见 §6.7）。逐行容错：坏行跳过并计数，不因单行脏数据整批失败。
 - **分类树维护事务**：移动节点、删除带级联更新的操作用事务保证原子性。
 
 ### 5.7 管理员权限模型（账户管理）
@@ -368,8 +368,17 @@ flowchart TD
 ### 6.7 CSV 导入端点
 | 方法 | 路径 | 鉴权 | 请求体 | 响应 |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/import/csv` | Session | `multipart/form-data` CSV 文件 | 预览解析结果 + 试跑归类 |
-| POST | `/api/import/confirm` | Session | `{entries: [{...}, ...]}` | 事务导入，返回成功/跳过/待分类统计 |
+| POST | `/api/import/csv` | Session | `multipart/form-data` CSV 文件 | 预览解析结果 + 试跑归类（不写库） |
+| POST | `/api/import/confirm` | Session | `multipart/form-data` CSV 文件（同预览） | 事务导入，返回成功/跳过/已归类/待分类统计 |
+
+**支持的 CSV 格式（一期：「毛线记账本」App 导出）：**
+- UTF-8 无 BOM，单一表头，无噪声/汇总行。列：`账单日, 账本, 类别, 子类别, 金额, 备注, 创建时间`。
+- **列映射**：`账单日`→`record_time`（东八区墙钟，舍秒）；`金额`→`amount_cents`（正数 magnitude，经 `parseAmountToCents` 转无符号整数分）；`备注`→`note`；`创建时间`/`账本` 列**忽略**。
+- **方向不取自 CSV**：`账本`（如「日常支出」）列不参与判定——方向只由 almanac 自身归类分类的 `direction` 派生（与 webhook 一致）。归类命中则带出方向，未命中则为待分类（方向 0）。
+- **归类输入（等价于 webhook 的 `type`）**：`RouteEntry` 只吃一个描述字符串，故按「**子类别优先，子类别为空则退回类别**」取值作为匹配输入（子类别更具体、最接近手写描述词，命中现有正则概率最高）。匹配算法与优先级完全复用 webhook 路由引擎（层级深优先 → 拖拽序 → id 兜底 → 命中即止），零差异。
+- **未来扩展**：如需支持支付宝/微信官方账单（GBK/BOM、头部噪声、自带方向列与交易单号），再按来源加 adapter 与去重，不影响本一期格式。
+
+> **确认采用文件重传而非回传解析行**：预览只回显前 N 行样本，确认时前端**重新上传同一文件**，服务端重新解析 + 重新归类后事务写库。好处：文件为唯一真相源（避免客户端篡改已归类结果），上万行时也不用把整份数据往返 JSON。
 
 ### 6.8 账户管理端点（仅管理员）
 > 本组端点仅对 `is_admin = 1` 的用户开放；非管理员访问一律返回 **403 Forbidden**（区别于未登录的 401）。管理员身份由 `users.is_admin` 字段判定，非仅比对用户名。
@@ -467,7 +476,7 @@ func (s *Store) migrate() error {
 - **金额精度**：19.90 → 1990 → 显示 19.90 的往返无损（无符号绝对值）；边界值（0.01 / 999999.99）。
 - **方向派生与待分类汇总**：方向全靠命中分类 `direction`；待分类（`category_id IS NULL`）不计入收/支汇总；跨方向匹配（无符号金额不影响归类）；手动改分类后方向随之切换。
 - **并发写入**：多个 Webhook 并发请求，WAL 模式下无死锁、数据无脏写。
-- **CSV 去重**：重复上传同一 CSV 文件，第二次全部跳过；文件内合法重复行（同分钟同额）不被误拦。
+- **CSV 导入**：预览端点解析后不写库、返回前 N 行 + 总笔数/成功归类数/待分类数供核对；确认端点事务批量写库；坏行跳过计数；归类结果与 webhook 摄入一致（同一 `RouteEntry` 引擎）。一期不做自动去重（无稳定单号），重复上传会产生重复账目，由用户经预览把关。
 
 ---
 **版本说明**：
@@ -476,3 +485,4 @@ func (s *Store) migrate() error {
 - v1.2 (2026-07-06)：**方案 B 重构——方向由归类分类派生、金额改存无符号绝对值**（追需求 v1.14 / 数据模型 v2.9）。时序图去掉 `direction=sign(amount)`；§2 schema 要点改无符号 + 方向来自分类；3.4 月度汇总改 `JOIN categories` 按 `c.direction` 分收支（待分类自然排除，单独计数）；4.1 流程图/4.2 优先级去掉“按符号定方向/方向隔离”改为跨方向统一匹配；4.3 缓存由收/支双切片改为单个跨方向切片（元素带 `direction`）；§7.7 金额精度用例改无符号，新增“方向派生与待分类汇总”测试点。
 - v1.3 (2026-07-06)：**汇总卡片 + 数据可视化落地对齐**（一期实现）。§3.2 饼图 SQL 加方向过滤（`root.direction = :direction`，收/支分别拉取），月份过滤由 `substr` 改左闭右开墙钟范围（吃 `(user_id, record_time)` 索引），标注 MVP 暂跨账本聚合；§3.4 卡片改 `LEFT JOIN` 一次分组按 `dir` 分流（`dir=0` 归待分类），新增上月收/支查询供“相比上月 ±X%”环比，月份用范围+`AddDate` 跨年；§6.4 看板端点由单个 `/api/dashboard` 拆为 `GET /api/summary`（卡片，含 `prev_*`）+ `GET /api/summary/by-category`（一级根饼图，卷到根）。代码：新增 `internal/store/summary.go`（`SummaryByMonth`/`SummaryByCategory` + `monthRange`，递归 CTE 卷根）与 5 个单测；`main.go` 挂两 handler；`dashboard.astro` 卡片接真值 + 月份选择器 + 待分类提醒条 + Chart.js 支出甜甜圈。
 - v1.4 (2026-07-07)：**账户管理页现代化 + 上次登录时间**。§5.3 登录校验补“成功后 best-effort 回写 `last_login_at`”步骤（`UpdateLastLogin`，写失败不阻塞登录）；§6.8 `GET /api/users` 响应补 `last_login_at`（空串=从未登录）。代码：`store.go` 新增 `last_login_at` 列 + 幂等迁移 `migrateLastLogin` + `UpdateLastLogin`，`UserInfo`/`ListUsers` 返回该字段（`COALESCE(...,'')`）；`main.go` 登录 handler 回写登录时间；前端 `admin/users.astro` 重写为 Tailwind + 侧边栏 + Lucide 风格（头像/徐章/创建时间/上次登录卡片行，改密/删除改用弹窗 dialog），`Sidebar.astro` 加管理员可见的“账户管理”入口。
+- v1.5 (2026-07-07)：**CSV 导入（A 方案：复用路由引擎）对齐**。靶定「毛线记账本」App 导出格式（UTF-8 无 BOM、列 `账单日,账本,类别,子类别,金额,备注,创建时间`）。§6.7 补「支持的 CSV 格式」小节：列映射（账单日→record_time、金额→amount_cents、备注→note，创建时间/账本列忽略）、方向不取自 CSV 而由归类分类派生、归类输入按「子类别优先→退回类别」当作等价 webhook `type`、匹配算法与优先级完全复用 `RouteEntry`。§5.6/§7.7 去重改为一期不做自动去重（无稳定单号）、靠「预览→确认」两步把关 + 逐行容错。端点沿用 `/api/import/csv`（预览）+ `/api/import/confirm`（确认）。

@@ -754,6 +754,52 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return id, nil
 }
 
+// InsertEntriesTx inserts a batch of entries in a single transaction and
+// returns the number inserted. Either all rows commit or none do (on any row
+// error the whole batch rolls back). Used by CSV import confirm. Each entry's
+// UserID/LedgerID/CategoryID/RecordTime must already be resolved and validated
+// by the caller; direction is derived from CategoryID as usual (nil = unclassified).
+func (s *Store) InsertEntriesTx(entries []Entry) (int, error) {
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin import tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+INSERT INTO ledger_entries
+    (user_id, ledger_id, category_id, amount_cents, raw_type, record_time, note, source, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare import insert: %w", err)
+	}
+	defer stmt.Close()
+
+	now := time.Now().Format(time.RFC3339)
+	for i, e := range entries {
+		var categoryID any
+		if e.CategoryID != nil {
+			categoryID = *e.CategoryID
+		}
+		var note any
+		if e.Note != "" {
+			note = e.Note
+		}
+		if _, err := stmt.Exec(
+			e.UserID, e.LedgerID, categoryID, e.AmountCents, e.RawType, e.RecordTime, note, e.Source, now, now,
+		); err != nil {
+			return 0, fmt.Errorf("insert import row %d: %w", i, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit import tx: %w", err)
+	}
+	return len(entries), nil
+}
+
 // EntryRow is one ledger entry as shown in list views. CategoryName is empty
 // when the entry is still unclassified (category_id IS NULL). Direction is the
 // entry's derived direction (1 income / -1 expense), taken from the assigned

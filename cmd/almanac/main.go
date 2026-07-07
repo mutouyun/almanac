@@ -1125,6 +1125,8 @@ func main() {
 	mux.Handle("/api/categories/", categoryItemHandler(st))
 	mux.Handle("/api/users", usersHandler(st))
 	mux.Handle("/api/users/", userItemHandler(st))
+	mux.Handle("/api/import/csv", importCSVHandler(st))
+	mux.Handle("/api/import/confirm", importConfirmHandler(st))
 
 	// Serve the embedded frontend (Astro build output) at the root path.
 	// staticFS is provided by the build-tagged files (embed_dist.go /

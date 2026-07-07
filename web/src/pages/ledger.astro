@@ -38,10 +38,16 @@ const title = '账本明细 · Almanac';
             <p class="text-slate-500 text-sm mt-0.5">在这里手动记账，管理所有流水。</p>
           </div>
         </div>
-        <button id="btn-new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
-          <i data-lucide="plus" class="w-4 h-4"></i>
-          <span>手动记账</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <button id="btn-import" class="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-xl font-medium shadow-sm transition-all flex items-center gap-2">
+            <i data-lucide="upload" class="w-4 h-4"></i>
+            <span>导入 CSV</span>
+          </button>
+          <button id="btn-new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>手动记账</span>
+          </button>
+        </div>
       </header>
 
       <!-- Filter bar -->
@@ -176,6 +182,73 @@ const title = '账本明细 · Almanac';
           <div class="flex gap-3">
             <button id="del-cancel" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-xl transition-all">取消</button>
             <button id="del-confirm" class="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-bold rounded-xl transition-all">删除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CSV Import Modal -->
+      <div id="import-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 items-center justify-center p-4" hidden>
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6">
+          <div class="flex justify-between items-center mb-5">
+            <h3 class="text-lg font-bold text-slate-800">导入 CSV</h3>
+            <button id="import-close" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+          </div>
+
+          <!-- Step 1: Upload -->
+          <div id="import-step1" class="space-y-4">
+            <div class="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:border-blue-300 transition-all">
+              <i data-lucide="file-text" class="w-12 h-12 text-slate-300 mx-auto mb-3"></i>
+              <p class="text-sm text-slate-600 mb-1">支持「毛线记账本」App 导出的 CSV 文件</p>
+              <p class="text-xs text-slate-400 mb-4">预览后确认，不会立即导入</p>
+              <input id="csv-file" type="file" accept=".csv" class="hidden" />
+              <button id="csv-pick" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl font-medium shadow-sm transition-all">选择文件</button>
+            </div>
+            <p id="import-msg1" class="text-center text-xs text-rose-500 min-h-[1em]"></p>
+          </div>
+
+          <!-- Step 2: Preview & Confirm -->
+          <div id="import-step2" class="space-y-4" hidden>
+            <div class="bg-slate-50 rounded-xl p-4 space-y-2">
+              <div class="flex justify-between text-sm">
+                <span class="text-slate-500">总记录：</span>
+                <span id="prev-total" class="font-bold text-slate-700">0</span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-slate-500">已归类：</span>
+                <span id="prev-classified" class="font-semibold text-emerald-600">0</span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-slate-500">待分类：</span>
+                <span id="prev-unclassified" class="font-semibold text-amber-600">0</span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-slate-500">跳过（格式错误）：</span>
+                <span id="prev-skipped" class="font-semibold text-slate-400">0</span>
+              </div>
+              <div class="border-t border-slate-200 my-2 pt-2 space-y-1">
+                <div class="flex justify-between text-sm">
+                  <span class="text-slate-500">收入总计：</span>
+                  <span id="prev-income" class="font-bold text-emerald-600">0</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-slate-500">支出总计：</span>
+                  <span id="prev-expense" class="font-bold text-rose-600">0</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-slate-500">待分类金额：</span>
+                  <span id="prev-unclass-amt" class="font-semibold text-slate-400">0</span>
+                </div>
+              </div>
+            </div>
+            <div class="max-h-60 overflow-y-auto bg-slate-50 rounded-xl p-3">
+              <p class="text-xs font-medium text-slate-400 mb-2">前 10 条示例：</p>
+              <div id="prev-sample" class="space-y-1 text-xs text-slate-600"></div>
+            </div>
+            <p id="import-msg2" class="text-center text-xs text-rose-500 min-h-[1em]"></p>
+            <div class="flex gap-3 pt-1">
+              <button id="import-back" class="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-xl transition-all">返回</button>
+              <button id="import-confirm" class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all">确认导入</button>
+            </div>
           </div>
         </div>
       </div>
@@ -596,6 +669,87 @@ const title = '账本明细 · Almanac';
       // Close modals on backdrop click.
       modal.onclick = (e) => { if (e.target === modal) hideModal(modal); };
       delModal.onclick = (e) => { if (e.target === delModal) hideModal(delModal); };
+
+      // ---- CSV Import ----
+      const importModal = document.getElementById('import-modal');
+      const impStep1 = document.getElementById('import-step1');
+      const impStep2 = document.getElementById('import-step2');
+      const impMsg1 = document.getElementById('import-msg1');
+      const impMsg2 = document.getElementById('import-msg2');
+      const csvFile = document.getElementById('csv-file');
+      let previewRows = [];
+
+      function resetImport() {
+        impStep1.hidden = false;
+        impStep2.hidden = true;
+        impMsg1.textContent = '';
+        impMsg2.textContent = '';
+        csvFile.value = '';
+        previewRows = [];
+      }
+      function openImport() { resetImport(); showModal(importModal); if (window.lucide) lucide.createIcons(); }
+
+      document.getElementById('btn-import').onclick = openImport;
+      document.getElementById('import-close').onclick = () => hideModal(importModal);
+      document.getElementById('import-back').onclick = () => resetImport();
+      importModal.onclick = (e) => { if (e.target === importModal) hideModal(importModal); };
+      document.getElementById('csv-pick').onclick = () => csvFile.click();
+
+      csvFile.onchange = async () => {
+        const file = csvFile.files && csvFile.files[0];
+        if (!file) return;
+        impMsg1.textContent = '解析中…';
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const res = await fetch('/api/import/csv', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!res.ok) { impMsg1.textContent = '❌ ' + (data.error || '解析失败'); return; }
+          renderPreview(data);
+        } catch (err) {
+          impMsg1.textContent = '❌ 上传失败';
+        }
+      };
+
+      function renderPreview(data) {
+        previewRows = (data.sample_rows || []);
+        document.getElementById('prev-total').textContent = data.total || 0;
+        document.getElementById('prev-classified').textContent = data.classified || 0;
+        document.getElementById('prev-unclassified').textContent = data.unclassified || 0;
+        document.getElementById('prev-skipped').textContent = data.skipped || 0;
+        document.getElementById('prev-income').textContent = fmtYuan(data.income_cents || 0);
+        document.getElementById('prev-expense').textContent = fmtYuan(data.expense_cents || 0);
+        document.getElementById('prev-unclass-amt').textContent = fmtYuan(data.unclassified_cents || 0);
+        const box = document.getElementById('prev-sample');
+        box.innerHTML = (data.sample_rows || []).map(r => {
+          const cat = r.category_name ? `<span class="text-emerald-600">${r.category_name}</span>` : '<span class="text-amber-600">待分类</span>';
+          return `<div class="flex justify-between gap-2 py-1 border-b border-slate-100"><span class="truncate">${r.record_time} · ${r.raw_type}</span><span class="shrink-0">${fmtYuan(Math.round(parseFloat(r.amount) * 100))} · ${cat}</span></div>`;
+        }).join('') || '<p class="text-slate-400">无数据</p>';
+        impStep1.hidden = true;
+        impStep2.hidden = false;
+      }
+
+      document.getElementById('import-confirm').onclick = async () => {
+        const file = csvFile.files && csvFile.files[0];
+        if (!file) { impMsg2.textContent = '❌ 文件丢失，请重新选择'; return; }
+        const btn = document.getElementById('import-confirm');
+        btn.disabled = true;
+        impMsg2.textContent = '导入中…';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const cres = await fetch('/api/import/confirm', { method: 'POST', body: fd });
+          const cdata = await cres.json();
+          if (!cres.ok) { impMsg2.textContent = '❌ ' + (cdata.error || '导入失败'); return; }
+          hideModal(importModal);
+          loadEntries();
+          alert(`导入完成：成功 ${cdata.imported} 条（已归类 ${cdata.classified} / 待分类 ${cdata.unclassified}），跳过 ${cdata.skipped} 条。`);
+        } catch (err) {
+          impMsg2.textContent = '❌ 导入失败';
+        } finally {
+          btn.disabled = false;
+        }
+      };
     </script>
   </body>
 </html>

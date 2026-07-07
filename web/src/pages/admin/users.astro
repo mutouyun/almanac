@@ -40,10 +40,15 @@ const title = '账户管理 · Almanac';
 
       <!-- App content: revealed for admins -->
       <div id="app" hidden>
-        <header class="flex justify-between items-end mb-8">
-          <div>
-            <h1 class="text-3xl font-bold text-slate-800 tracking-tight">账户管理 👥</h1>
-            <p class="text-slate-500 mt-1">管理系统账户，掌握每个成员的活跃状态。</p>
+        <header class="flex justify-between items-center mb-8">
+          <div class="flex items-center gap-4">
+            <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <i data-lucide="users" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h1 class="text-2xl font-bold text-slate-800 tracking-tight">账户管理</h1>
+              <p class="text-slate-500 text-sm mt-0.5">管理系统账户，掌握每个成员的活跃状态。</p>
+            </div>
           </div>
         </header>
 
@@ -143,7 +148,7 @@ const title = '账户管理 · Almanac';
         .then((r) => { if (!r.ok) throw new Error('unauthorized'); return r.json(); })
         .then((d) => {
           if (!d.is_admin) { window.location.replace('/dashboard'); return; }
-          gate.hidden = true;
+          gate.style.display = 'none';
           app.hidden = false;
           window.lucide?.createIcons();
           loadUsers();

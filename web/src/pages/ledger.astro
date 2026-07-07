@@ -28,10 +28,15 @@ const title = '账本明细 · Almanac';
 
     <main class="flex-1 ml-64 p-8 max-w-5xl">
       <!-- Header -->
-      <header class="flex justify-between items-end mb-8">
-        <div>
-          <h1 class="text-3xl font-bold text-slate-800 tracking-tight">账本明细</h1>
-          <p class="text-slate-500 mt-1">在这里手动记账，管理所有流水。</p>
+      <header class="flex justify-between items-center mb-8">
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <i data-lucide="book-text" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h1 class="text-2xl font-bold text-slate-800 tracking-tight">账本明细</h1>
+            <p class="text-slate-500 text-sm mt-0.5">在这里手动记账，管理所有流水。</p>
+          </div>
         </div>
         <button id="btn-new" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-medium shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
           <i data-lucide="plus" class="w-4 h-4"></i>

@@ -108,17 +108,29 @@ const title = '看板 · Almanac';
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Main List -->
         <div class="lg:col-span-2 space-y-6">
-          <!-- Expense breakdown chart -->
-          <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <i data-lucide="pie-chart" class="text-rose-500 w-5 h-5"></i>
-              支出分布
-            </h3>
-            <div id="chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
-            <div class="relative" style="height: 260px;">
-              <canvas id="expense-chart"></canvas>
-            </div>
-          </section>
+          <!-- Breakdown charts: expense + income side by side -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <i data-lucide="pie-chart" class="text-rose-500 w-5 h-5"></i>
+                支出分布
+              </h3>
+              <div id="expense-chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无支出数据</div>
+              <div class="relative" style="height: 260px;">
+                <canvas id="expense-chart"></canvas>
+              </div>
+            </section>
+            <section class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <i data-lucide="pie-chart" class="text-emerald-500 w-5 h-5"></i>
+                收入分布
+              </h3>
+              <div id="income-chart-empty" class="py-10 text-center text-sm text-slate-400" hidden>本月暂无收入数据</div>
+              <div class="relative" style="height: 260px;">
+                <canvas id="income-chart"></canvas>
+              </div>
+            </section>
+          </div>
 
           <section id="entries" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
@@ -429,15 +441,22 @@ const title = '看板 · Almanac';
 
       const CHART_COLORS = ['#f43f5e', '#fb923c', '#facc15', '#4ade80', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#94a3b8'];
       let expenseChart = null;
+      let incomeChart = null;
 
-      async function loadChart() {
-        const empty = document.getElementById('chart-empty');
-        const canvas = document.getElementById('expense-chart');
+      function loadChart() {
+        renderChart({ direction: -1, canvasId: 'expense-chart', emptyId: 'expense-chart-empty', get: () => expenseChart, set: (c) => { expenseChart = c; } });
+        renderChart({ direction: 1, canvasId: 'income-chart', emptyId: 'income-chart-empty', get: () => incomeChart, set: (c) => { incomeChart = c; } });
+      }
+
+      async function renderChart({ direction, canvasId, emptyId, get, set }) {
+        const empty = document.getElementById(emptyId);
+        const canvas = document.getElementById(canvasId);
         try {
-          const res = await fetch(`/api/summary/by-category?month=${selectedMonth()}&direction=-1`);
+          const res = await fetch(`/api/summary/by-category?month=${selectedMonth()}&direction=${direction}`);
           const d = await res.json();
           const slices = d.slices || [];
-          if (expenseChart) { expenseChart.destroy(); expenseChart = null; }
+          const existing = get();
+          if (existing) { existing.destroy(); set(null); }
           if (!slices.length) {
             empty.hidden = false;
             canvas.style.display = 'none';
@@ -445,7 +464,7 @@ const title = '看板 · Almanac';
           }
           empty.hidden = true;
           canvas.style.display = 'block';
-          expenseChart = new Chart(canvas, {
+          set(new Chart(canvas, {
             type: 'doughnut',
             data: {
               labels: slices.map(s => s.name),
@@ -467,7 +486,7 @@ const title = '看板 · Almanac';
                 },
               },
             },
-          });
+          }));
         } catch (e) {}
       }
     </script>

@@ -1,4 +1,4 @@
-# Almanac Ledger 数据模型设计文档 v2.9
+# Almanac Ledger 数据模型设计文档 v3.0
 
 > 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.4)
 > 本文从交互设计反推数据实体，定义表结构、约束、索引、触发器与关系。所有关键决策已落定（见第 6 节）。
@@ -33,6 +33,7 @@ erDiagram
         string password_hash
         string webhook_token
         int is_admin
+        string last_login_at
     }
     ledgers {
         int id PK
@@ -77,6 +78,7 @@ erDiagram
 | `is_admin` | INTEGER | NOT NULL DEFAULT 0 | 管理员标志：1=管理员（可增删改其他账户）/ 0=普通用户。首启播种的 admin 为 1，其余为 0 |
 | `created_at` | TEXT | NOT NULL | 创建时间 |
 | `updated_at` | TEXT | NOT NULL | 最后修改时间 |
+| `last_login_at` | TEXT | NULL | 上次登录时间（RFC3339，登录成功回写）；NULL=自该功能上线后从未登录 |
 
 - 索引：`username`、`webhook_token` 均唯一索引。
 
@@ -264,3 +266,4 @@ WHERE e.user_id = :uid AND e.ledger_id = :ledger_id
 - v2.7 (2026-07-05)：三道 DB 层加固——`amount_cents` 补 `CHECK(!= 0)`（零金额堆不进库，与原则对齐）；`ledgers` 补局部唯一索引 `idx_user_default_ledger`（每用户最多一个默认账本）；3.4 去重说明补“批次锤点”机制（不得边插边比，否则误拦文件内合法重复）。
 - v2.8 (2026-07-05)：`users` 表补 `is_admin`（INTEGER NOT NULL DEFAULT 0），支撑账户管理（仅管理员可增删改其他账户）；首启播种 admin 为 1，`/api/users` 新建账户为 0；ER 图同步。迁移采用 `ALTER TABLE ... ADD COLUMN` + `UPDATE ... WHERE username='admin'` 回填存量。
 - v2.9 (2026-07-06)：**方案 B 重构——方向由分类派生、金额改存无符号绝对值**。追上游需求 v1.14：第 1 节金额精度与方向改为“无符号 + 方向来自分类”；3.4 `amount_cents` 约束 `!= 0` → `> 0`，方向判定/归类校验/字段映射同步（取绝对值、不再校验符号）；4.2 路由拉取去掉 `direction = :direction` 过滤（收/支合并跨方向匹配）；4.3 月度统计改为 `JOIN categories` 按 `c.direction` 分收支（待分类自然排除）；第 5 节不变式“符号与方向一致”→“无符号入库、无需方向校验”；决策点 B/G 更新。**需配套数据迁移**：存量 `amount_cents` 取绝对值（`UPDATE ... SET amount_cents = abs(amount_cents)`），旧符号与新分类方向已天然一致（负数原本就归在支出类）。
+- v3.0 (2026-07-07)：`users` 表补 `last_login_at`（TEXT NULL），记录用户上次登录时间，支撑账户管理页展示成员活跃状态；登录成功后由后端 best-effort 回写（RFC3339，写失败不阻塞登录）；`/api/users`（`ListUsers`）用 `COALESCE(last_login_at,'')` 返回该字段（空串=从未登录）；ER 图同步。迁移采用幂等 `ALTER TABLE users ADD COLUMN last_login_at TEXT`（`migrateLastLogin`），老库存量用户该字段为 NULL，展示为“从未登录”。

@@ -285,6 +285,7 @@ flowchart TD
   1. `SELECT id, password_hash FROM users WHERE username = ?`
   2. bcrypt.CompareHashAndPassword(hash, 输入密码)
   3. 通过则签发会话；失败返回「用户名或密码错误」（不区分用户不存在 vs 密码错误，防枚举）。
+  4. 登录成功后 best-effort 回写 `users.last_login_at`（`UpdateLastLogin`，RFC3339）；该写入失败仅记日志、**不阻塞登录**（登录成否不依赖登录时间回写）。
 
 ### 5.4 多用户数据隔离强制
 - **SQL 层每条查询必须 `WHERE user_id = :uid`**（从 context 取已鉴权的 user_id）。Store 层 API 统一要求 `user_id` 作首参。
@@ -375,7 +376,7 @@ flowchart TD
 
 | 方法 | 路径 | 鉴权 | 请求体 / 参数 | 响应 |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/users` | Session + admin | 无 | 列出全部账户 `{users: [{id, username, is_admin, created_at}, ...]}` |
+| GET | `/api/users` | Session + admin | 无 | 列出全部账户 `{users: [{id, username, is_admin, created_at, last_login_at}, ...]}`（`last_login_at` 空串=从未登录，供账户管理页展示成员活跃状态） |
 | POST | `/api/users` | Session + admin | `{username, password}` | 创建账户（新账户 `is_admin=0`，自动播种默认账本 + webhook_token），返回 `{id, username}` |
 | DELETE | `/api/users/{id}` | Session + admin | 无 | 删除账户（级联删除其全部账本数据）；**拦截删除管理员账户**（`is_admin=1`）返回 400 |
 | POST | `/api/users/{id}/reset-password` | Session + admin | `{new_password}` | 管理员重置他人密码（无需旧密码），同步踢掉该用户全部会话 |
@@ -474,3 +475,4 @@ func (s *Store) migrate() error {
 - v1.1 (2026-07-05)：补账户管理（仅管理员）。`users` 表加 `is_admin` 字段（默认 0，播种 admin 为 1）；新增 6.8 账户管理端点（GET/POST `/api/users`、DELETE `/api/users/{id}`、POST `/api/users/{id}/reset-password`）；非管理员 403；管理员不可自删/删管理员；重置密码后踢会话；`/api/auth/me` 响应加 `is_admin`。
 - v1.2 (2026-07-06)：**方案 B 重构——方向由归类分类派生、金额改存无符号绝对值**（追需求 v1.14 / 数据模型 v2.9）。时序图去掉 `direction=sign(amount)`；§2 schema 要点改无符号 + 方向来自分类；3.4 月度汇总改 `JOIN categories` 按 `c.direction` 分收支（待分类自然排除，单独计数）；4.1 流程图/4.2 优先级去掉“按符号定方向/方向隔离”改为跨方向统一匹配；4.3 缓存由收/支双切片改为单个跨方向切片（元素带 `direction`）；§7.7 金额精度用例改无符号，新增“方向派生与待分类汇总”测试点。
 - v1.3 (2026-07-06)：**汇总卡片 + 数据可视化落地对齐**（一期实现）。§3.2 饼图 SQL 加方向过滤（`root.direction = :direction`，收/支分别拉取），月份过滤由 `substr` 改左闭右开墙钟范围（吃 `(user_id, record_time)` 索引），标注 MVP 暂跨账本聚合；§3.4 卡片改 `LEFT JOIN` 一次分组按 `dir` 分流（`dir=0` 归待分类），新增上月收/支查询供“相比上月 ±X%”环比，月份用范围+`AddDate` 跨年；§6.4 看板端点由单个 `/api/dashboard` 拆为 `GET /api/summary`（卡片，含 `prev_*`）+ `GET /api/summary/by-category`（一级根饼图，卷到根）。代码：新增 `internal/store/summary.go`（`SummaryByMonth`/`SummaryByCategory` + `monthRange`，递归 CTE 卷根）与 5 个单测；`main.go` 挂两 handler；`dashboard.astro` 卡片接真值 + 月份选择器 + 待分类提醒条 + Chart.js 支出甜甜圈。
+- v1.4 (2026-07-07)：**账户管理页现代化 + 上次登录时间**。§5.3 登录校验补“成功后 best-effort 回写 `last_login_at`”步骤（`UpdateLastLogin`，写失败不阻塞登录）；§6.8 `GET /api/users` 响应补 `last_login_at`（空串=从未登录）。代码：`store.go` 新增 `last_login_at` 列 + 幂等迁移 `migrateLastLogin` + `UpdateLastLogin`，`UserInfo`/`ListUsers` 返回该字段（`COALESCE(...,'')`）；`main.go` 登录 handler 回写登录时间；前端 `admin/users.astro` 重写为 Tailwind + 侧边栏 + Lucide 风格（头像/徐章/创建时间/上次登录卡片行，改密/删除改用弹窗 dialog），`Sidebar.astro` 加管理员可见的“账户管理”入口。

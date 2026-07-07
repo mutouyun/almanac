@@ -439,16 +439,19 @@ const title = '看板 · Almanac';
         } catch (e) {}
       }
 
-      const CHART_COLORS = ['#f43f5e', '#fb923c', '#facc15', '#4ade80', '#38bdf8', '#818cf8', '#c084fc', '#f472b6', '#94a3b8'];
+      // 支出：暖色系（红/橙/黄）
+      const EXPENSE_COLORS = ['#f43f5e', '#fb923c', '#facc15', '#f97316', '#e11d48', '#fbbf24', '#ef4444', '#f59e0b', '#dc2626'];
+      // 收入：绿色系（区分度足够，不纯渐变）
+      const INCOME_COLORS  = ['#22c55e', '#10b981', '#4ade80', '#059669', '#86efac', '#16a34a', '#34d399', '#15803d', '#a7f3d0'];
       let expenseChart = null;
       let incomeChart = null;
 
       function loadChart() {
-        renderChart({ direction: -1, canvasId: 'expense-chart', emptyId: 'expense-chart-empty', get: () => expenseChart, set: (c) => { expenseChart = c; } });
-        renderChart({ direction: 1, canvasId: 'income-chart', emptyId: 'income-chart-empty', get: () => incomeChart, set: (c) => { incomeChart = c; } });
+        renderChart({ direction: -1, canvasId: 'expense-chart', emptyId: 'expense-chart-empty', colors: EXPENSE_COLORS, get: () => expenseChart, set: (c) => { expenseChart = c; } });
+        renderChart({ direction: 1, canvasId: 'income-chart', emptyId: 'income-chart-empty', colors: INCOME_COLORS, get: () => incomeChart, set: (c) => { incomeChart = c; } });
       }
 
-      async function renderChart({ direction, canvasId, emptyId, get, set }) {
+      async function renderChart({ direction, canvasId, emptyId, colors, get, set }) {
         const empty = document.getElementById(emptyId);
         const canvas = document.getElementById(canvasId);
         try {
@@ -470,7 +473,7 @@ const title = '看板 · Almanac';
               labels: slices.map(s => s.name),
               datasets: [{
                 data: slices.map(s => s.total_cents / 100),
-                backgroundColor: slices.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
+                backgroundColor: slices.map((_, i) => colors[i % colors.length]),
                 borderWidth: 0,
               }],
             },

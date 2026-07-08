@@ -152,7 +152,7 @@ const title = '账本明细 · Almanac';
       </section>
 
       <!-- Floating batch action bar (selection mode, when >=1 selected) -->
-      <div id="batch-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 ml-32 z-30 bg-white rounded-2xl shadow-xl border border-slate-200 px-5 py-3 flex items-center gap-4" hidden>
+      <div id="batch-bar" class="fixed bottom-6 left-1/2 -translate-x-1/2 ml-32 z-30 bg-white rounded-2xl shadow-xl border border-slate-200 px-5 py-3 items-center gap-4" hidden>
         <span id="batch-count" class="text-sm font-medium text-slate-700">已选 0 笔 · 合计 ¥0.00</span>
         <div class="flex items-center gap-2">
           <button id="batch-recat" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-40">
@@ -641,7 +641,9 @@ const title = '账本明细 · Almanac';
         for (const e of rowCache) {
           if (!selected.has(e.id)) continue;
           const dir = e.direction || 0;
-          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : 0);
+          // Classified rows sum signed (income +, expense -); unclassified
+          // rows have no direction, so count their absolute magnitude.
+          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : e.amount_cents);
         }
         const sumText = (cents < 0 ? '-' : '') + fmtYuan(cents);
         document.getElementById('sel-summary').textContent = `已选 ${n} 笔`;
@@ -657,12 +659,16 @@ const title = '账本明细 · Almanac';
       function enterSelectMode() {
         selectMode = true;
         selected.clear();
+        const selAll = document.getElementById('sel-all');
+        if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
         document.getElementById('sel-bar').hidden = false;
         loadEntries();
       }
       function exitSelectMode() {
         selectMode = false;
         selected.clear();
+        const selAll = document.getElementById('sel-all');
+        if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
         document.getElementById('sel-bar').hidden = true;
         const bar = document.getElementById('batch-bar');
         bar.hidden = true; bar.classList.remove('flex');
@@ -720,7 +726,7 @@ const title = '账本明细 · Almanac';
         for (const e of rowCache) {
           if (!selected.has(e.id)) continue;
           const dir = e.direction || 0;
-          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : 0);
+          cents += dir === 1 ? e.amount_cents : (dir === -1 ? -e.amount_cents : e.amount_cents);
         }
         const sumText = (cents < 0 ? '-' : '') + fmtYuan(cents);
         document.getElementById('bdel-desc').textContent = `将删除 ${selected.size} 笔，合计 ${sumText}，不可恢复。`;

@@ -92,6 +92,48 @@ almanac/
 
 ---
 
+## 🛠️ 本地开发
+
+### 运行环境
+
+- Go 1.22+
+- Node.js 18+（用于构建 Astro 前端）
+
+### 一键起本地服务（PowerShell）
+
+本地实测统一编译成 `almanac_local.exe`，用 **9090** 端口起（避开线上 8080）：
+
+```powershell
+chcp 65001 | Out-Null
+cd web; npm run build; cd ..                        # 1. 先构建前端
+if (Test-Path cmd\almanac\dist) { Remove-Item -Recurse -Force cmd\almanac\dist }
+Copy-Item -Recurse web\dist cmd\almanac\dist       # 2. dist 复制到 cmd/almanac/dist
+go build -tags embedfrontend -o almanac_local.exe ./cmd/almanac   # 3. 必带 -tags embedfrontend
+.\almanac_local.exe -addr :9090                     # 4. 9090 起服
+```
+
+启动后访问 `http://localhost:9090/login/` 登录。
+
+> ⚠️ **前端 embed 两个坑**：静态页面只有在带 build tag `embedfrontend`、且先把 `web/dist` 复制到 `cmd/almanac/dist` 后才会打进二进制。漏了任一步，`go build` 会回退到 `embed_stub.go` 空壳，页面全 404（只有 `/` 返回 ~81 字节占位）。CI 构建同理。
+
+### 常用命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `go build ./...` | 编译校验（不含前端 embed） |
+| `go vet ./...` | 静态检查 |
+| `go test ./...` | 跑全部单元测试 |
+| `-addr :9090` / `ADDR` 环境变量 | 监听地址，缺省 `:8080` |
+| `-db <path>` / `DB_PATH` 环境变量 | SQLite 数据库路径 |
+
+### 测完停服务
+
+```powershell
+Get-Process almanac_local -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) © mutouyun

@@ -411,6 +411,20 @@ func entriesListHandler(st *store.Store, w http.ResponseWriter, r *http.Request,
 		StartTime: strings.TrimSpace(q.Get("start")),
 		EndTime:   strings.TrimSpace(q.Get("end")),
 	}
+	// period: when present, narrow the list to the same [start, end) window the
+	// overview uses (month/year/all). Ignored for "all" (whole history) and
+	// overridden by any explicit start/end above.
+	if q.Get("period") != "" || q.Get("month") != "" {
+		period, value := parseSummaryPeriod(r)
+		if start, end, err := store.PeriodRange(period, value); err == nil && start != "" {
+			if filter.StartTime == "" {
+				filter.StartTime = start
+			}
+			if filter.EndTime == "" && filter.EndExclusive == "" {
+				filter.EndExclusive = end
+			}
+		}
+	}
 	// direction: "income" | "expense" | "unclassified" (anything else = any)
 	switch q.Get("direction") {
 	case "income":

@@ -140,6 +140,75 @@ func TestListEntriesFilterTimeAndAmount(t *testing.T) {
 	_ = late
 }
 
+// TestListEntriesEndExclusive: EndExclusive uses a strict `<` so an entry at
+// the exact boundary (first instant of the next period) is excluded, matching
+// the [start, end) window the overview aggregation uses.
+func TestListEntriesEndExclusive(t *testing.T) {
+	s, uid := newTestStore(t)
+	inJuly := mkentryFull(t, s, uid, 1000, "a", "", "2026-07-31 23:59", nil)
+	boundary := mkentryFull(t, s, uid, 2000, "b", "", "2026-08-01 00:00", nil)
+
+	// Month window [2026-07-01 00:00, 2026-08-01 00:00): boundary excluded.
+	ids, total := filterIDs(t, s, uid, EntryFilter{
+		StartTime:    "2026-07-01 00:00",
+		EndExclusive: "2026-08-01 00:00",
+	})
+	if total != 1 || !hasID(ids, inJuly) || hasID(ids, boundary) {
+		t.Errorf("end-exclusive window = %v (total %d), want [%d]", ids, total, inJuly)
+	}
+
+	// Inclusive EndTime at the same boundary WOULD include it (contrast).
+	ids, _ = filterIDs(t, s, uid, EntryFilter{
+		StartTime: "2026-07-01 00:00",
+		EndTime:   "2026-08-01 00:00",
+	})
+	if !hasID(ids, boundary) {
+		t.Errorf("inclusive end should include boundary %d, got %v", boundary, ids)
+	}
+}
+
+// TestPeriodRangeFeedsEntryFilter: the exported PeriodRange bounds, fed into an
+// EntryFilter (start + EndExclusive), select exactly the period's entries.
+func TestPeriodRangeFeedsEntryFilter(t *testing.T) {
+	s, uid := newTestStore(t)
+	jun := mkentryFull(t, s, uid, 1000, "jun", "", "2026-06-15 12:00", nil)
+	jul := mkentryFull(t, s, uid, 2000, "jul", "", "2026-07-15 12:00", nil)
+	nextYear := mkentryFull(t, s, uid, 3000, "y27", "", "2027-01-02 12:00", nil)
+
+	// Month 2026-07 -> only the July entry.
+	start, end, err := PeriodRange("month", "2026-07")
+	if err != nil {
+		t.Fatalf("PeriodRange month: %v", err)
+	}
+	ids, total := filterIDs(t, s, uid, EntryFilter{StartTime: start, EndExclusive: end})
+	if total != 1 || !hasID(ids, jul) {
+		t.Errorf("month window = %v (total %d), want [%d]", ids, total, jul)
+	}
+
+	// Year 2026 -> June + July, not the 2027 entry.
+	start, end, err = PeriodRange("year", "2026")
+	if err != nil {
+		t.Fatalf("PeriodRange year: %v", err)
+	}
+	ids, total = filterIDs(t, s, uid, EntryFilter{StartTime: start, EndExclusive: end})
+	if total != 2 || !hasID(ids, jun) || !hasID(ids, jul) || hasID(ids, nextYear) {
+		t.Errorf("year window = %v (total %d), want [%d %d]", ids, total, jun, jul)
+	}
+
+	// All -> empty bounds, no time filter, everything.
+	start, end, err = PeriodRange("all", "")
+	if err != nil {
+		t.Fatalf("PeriodRange all: %v", err)
+	}
+	if start != "" || end != "" {
+		t.Errorf("all period should have empty bounds, got %q %q", start, end)
+	}
+	ids, total = filterIDs(t, s, uid, EntryFilter{StartTime: start, EndExclusive: end})
+	if total != 3 {
+		t.Errorf("all window total = %d, want 3 (ids %v)", total, ids)
+	}
+}
+
 // TestListEntriesFilterCombined: multiple dimensions AND together.
 func TestListEntriesFilterCombined(t *testing.T) {
 	s, uid := newTestStore(t)

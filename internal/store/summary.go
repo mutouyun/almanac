@@ -68,6 +68,17 @@ func periodRange(period, value string) (start, end, prevStart, prevEnd string, e
 	return start, end, prevStart, prevEnd, nil
 }
 
+// PeriodRange exposes the current-period [start, end) wall-clock bounds for a
+// period ("month"/"year"/"all") so callers outside summary aggregation (e.g.
+// the entries list) can filter records by the same window the overview uses.
+// Bounds are "YYYY-MM-DD HH:mm" strings that compare lexicographically against
+// record_time; end is exclusive (first instant of the next period). For "all"
+// both are empty so the caller scans the whole history.
+func PeriodRange(period, value string) (start, end string, err error) {
+	s, e, _, _, err := periodRange(period, value)
+	return s, e, err
+}
+
 // monthRange parses a "YYYY-MM" key and returns the [start, end) wall-clock
 // string bounds plus the previous month's start, all in "YYYY-MM-DD HH:mm"
 // form so they compare lexicographically against stored record_time values

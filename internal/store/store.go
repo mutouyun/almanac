@@ -824,13 +824,16 @@ type EntryRow struct {
 // category ids (the handler expands a chosen category into its subtree).
 // Keyword does a case-insensitive substring match on raw_type OR note.
 // StartTime/EndTime bound record_time (inclusive, "YYYY-MM-DD HH:mm" or a bare
-// date). MinCents/MaxCents bound the unsigned amount (nil = unbounded).
+// date). EndExclusive bounds record_time with a strict `<` (first instant of
+// the next period) so callers can pass a period's [start, end) window directly.
+// MinCents/MaxCents bound the unsigned amount (nil = unbounded).
 type EntryFilter struct {
 	Direction   *int
 	CategoryIDs []int64
 	Keyword     string
 	StartTime   string
 	EndTime     string
+	EndExclusive string
 	MinCents    *int64
 	MaxCents    *int64
 }
@@ -873,6 +876,10 @@ func (f EntryFilter) buildWhere(userID int64) (string, []any) {
 	if f.EndTime != "" {
 		clauses = append(clauses, "e.record_time <= ?")
 		args = append(args, f.EndTime)
+	}
+	if f.EndExclusive != "" {
+		clauses = append(clauses, "e.record_time < ?")
+		args = append(args, f.EndExclusive)
 	}
 	if f.MinCents != nil {
 		clauses = append(clauses, "e.amount_cents >= ?")

@@ -415,7 +415,7 @@ const title = '看板 · Almanac';
         const list = document.getElementById('entries-list');
         const loading = document.getElementById('entries-loading');
         try {
-          const res = await fetch('/api/entries?limit=8');
+          const res = await fetch(`/api/entries?limit=8&${periodQuery()}`);
           const data = await res.json();
           loading.hidden = true;
           list.hidden = false;
@@ -460,7 +460,7 @@ const title = '看板 · Almanac';
           }).join('');
           window.lucide?.createIcons();
 
-          document.getElementById('entries-total').textContent = `显示最近 ${data.entries.length} 条（共 ${data.total} 条），完整明细见「账本」`;
+          document.getElementById('entries-total').textContent = `${periodNoun()}共 ${data.total} 条，显示最近 ${data.entries.length} 条，完整明细见「账本」`;
           bindCategorySelects();
         } catch (e) {
           loading.textContent = '❌ 加载失败';
@@ -522,12 +522,19 @@ const title = '看板 · Almanac';
         return value ? `period=${period}&value=${value}` : `period=${period}`;
       }
 
+      // periodNoun returns the active period label (本月/本年/累计) for reuse in
+      // card labels and list captions.
+      function periodNoun() {
+        const p = periodType.value;
+        return p === 'year' ? '\u672c\u5e74' : (p === 'all' ? '\u7d2f\u8ba1' : '\u672c\u6708');
+      }
+
       // syncPeriodUI toggles the value selector visibility and relabels cards.
       function syncPeriodUI() {
         const p = periodType.value;
         monthPicker.classList.toggle('hidden', p !== 'month');
         yearPicker.classList.toggle('hidden', p !== 'year');
-        const noun = p === 'year' ? '\u672c\u5e74' : (p === 'all' ? '\u7d2f\u8ba1' : '\u672c\u6708');
+        const noun = periodNoun();
         overviewTitle.textContent = noun + '\u6982\u89c8';
         labelIncome.textContent = noun + '\u6536\u5165';
         labelExpense.textContent = noun + '\u652f\u51fa';
@@ -542,10 +549,10 @@ const title = '看板 · Almanac';
         return periodType.value === 'year' ? '\u8f83\u4e0a\u5e74 ' : '\u8f83\u4e0a\u6708 ';
       }
 
-      function reloadAll() { syncPeriodUI(); loadSummary(); loadChart(); }
+      function reloadAll() { syncPeriodUI(); loadEntries(); loadSummary(); loadChart(); }
       periodType.onchange = reloadAll;
-      monthPicker.onchange = () => { loadSummary(); loadChart(); };
-      yearPicker.onchange = () => { loadSummary(); loadChart(); };
+      monthPicker.onchange = () => { loadEntries(); loadSummary(); loadChart(); };
+      yearPicker.onchange = () => { loadEntries(); loadSummary(); loadChart(); };
       syncPeriodUI();
 
       // pctDelta renders the "vs prior period" text; guards divide-by-zero.

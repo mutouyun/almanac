@@ -579,10 +579,10 @@ const title = '看板 · Almanac';
         } catch (e) {}
       }
 
-      // 支出：暖色系（红/橙/黄）
-      const EXPENSE_COLORS = ['#f43f5e', '#fb923c', '#facc15', '#f97316', '#e11d48', '#fbbf24', '#ef4444', '#f59e0b', '#dc2626'];
-      // 收入：绿色系（区分度足够，不纯渐变）
-      const INCOME_COLORS  = ['#22c55e', '#10b981', '#4ade80', '#059669', '#86efac', '#16a34a', '#34d399', '#15803d', '#a7f3d0'];
+      // 支出：暖色系（红/橙/黄），深浅+色相交错排，相邻扇区对比明显
+      const EXPENSE_COLORS = ['#e11d48', '#fdba74', '#b91c1c', '#facc15', '#ea580c', '#fca5a5', '#f59e0b', '#fde047', '#f43f5e', '#dc2626', '#fb923c', '#eab308', '#ef4444', '#fda4af', '#f97316', '#fbbf24'];
+      // 收入：绿色系（green/emerald 为主，末尾补少量 lime/teal 黄绿·蓝绿凑满 16），交错排
+      const INCOME_COLORS  = ['#16a34a', '#6ee7b7', '#047857', '#4ade80', '#065f46', '#86efac', '#10b981', '#166534', '#34d399', '#15803d', '#a3e635', '#14b8a6', '#22c55e', '#2dd4bf', '#059669', '#84cc16'];
       let expenseChart = null;
       let incomeChart = null;
 

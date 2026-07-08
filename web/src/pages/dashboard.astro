@@ -216,8 +216,8 @@ const title = '看板 · Almanac';
               <div class="text-[11px] text-slate-500 leading-relaxed space-y-1">
                 <p class="font-semibold text-slate-600">字段说明</p>
                 <p><code class="text-slate-700">type</code> 描述/摘要 <span class="text-rose-500">(必填)</span>,如「午餐」「工资」</p>
-                <p><code class="text-slate-700">amount</code> 金额,正数(方向按分类判定)</p>
-                <p><code class="text-slate-700">date</code> 时间,ISO 8601 格式带时区(如 <code class="text-slate-700">2026-07-05T14:30:00+08:00</code>),可留空取当前</p>
+                <p><code class="text-slate-700">amount</code> 金额 <span class="text-rose-500">(必填)</span>,正数(方向按分类判定)</p>
+                <p><code class="text-slate-700">date</code> 时间 <span class="text-rose-500">(必填)</span>,ISO 8601 格式带时区,如 <code class="text-slate-700">2026-07-05T14:30:00+08:00</code></p>
               </div>
               <p id="wh-msg" class="text-center text-[11px] min-h-[1em]"></p>
             </div>
@@ -289,7 +289,7 @@ const title = '看板 · Almanac';
           currentCurl = `curl -X POST ${currentUrl} \\
   -H "X-Webhook-Token: ${currentToken}" \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"午餐","amount":"25.5"}'`;
+  -d '{"type":"午餐","amount":"25.5","date":"2026-07-05T14:30:00+08:00"}'`;
           whCurl.textContent = currentCurl;
         } catch (e) {
           whMsg.textContent = '❌ 加载失败';

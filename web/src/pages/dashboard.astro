@@ -488,9 +488,10 @@ const title = '看板 · Almanac';
 
       // pctDelta renders the "vs last month" text; guards divide-by-zero.
       function pctDelta(cur, prev) {
-        if (prev === 0) return cur === 0 ? '\u4e0e\u4e0a\u6708\u6301\u5e73' : '\u8f83\u4e0a\u6708 \u65b0\u589e';
+        // 上月为 0 时百分比无意义，改为直接展示本月新增的实际金额。
+        if (prev === 0) return cur === 0 ? '\u4e0e\u4e0a\u6708\u6301\u5e73' : '\u8f83\u4e0a\u6708 ' + fmtYuan(cur);
         const p = Math.round(((cur - prev) / prev) * 100);
-        return '\u76f8\u6bd4\u4e0a\u6708 ' + (p >= 0 ? '+' : '') + p + '%';
+        return '\u8f83\u4e0a\u6708 ' + (p >= 0 ? '+' : '') + p + '%';
       }
 
       async function loadSummary() {

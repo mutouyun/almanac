@@ -65,8 +65,16 @@ const title = '看板 · Almanac';
 
       <!-- Grid Layout -->
       <div class="flex justify-between items-center mb-4">
-        <h2 class="text-sm font-bold text-slate-400 uppercase tracking-wider">本月概览</h2>
-        <input id="month-picker" type="month" class="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:border-blue-300" />
+        <h2 id="overview-title" class="text-sm font-bold text-slate-400 uppercase tracking-wider">本月概览</h2>
+        <div class="flex items-center gap-2">
+          <select id="period-type" class="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:border-blue-300">
+            <option value="month">月份</option>
+            <option value="year">年份</option>
+            <option value="all">全部</option>
+          </select>
+          <input id="month-picker" type="month" class="text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:border-blue-300" />
+          <select id="year-picker" class="hidden text-sm bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:border-blue-300"></select>
+        </div>
       </div>
       <div class="grid grid-cols-3 gap-6 mb-8">
         <!-- Quick Stats -->
@@ -75,7 +83,7 @@ const title = '看板 · Almanac';
             <div class="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
               <i data-lucide="trending-up" class="w-5 h-5"></i>
             </div>
-            <span class="text-sm font-medium text-slate-500">本月收入</span>
+            <span id="label-income" class="text-sm font-medium text-slate-500">本月收入</span>
           </div>
           <div id="stat-income" class="text-2xl font-bold text-slate-800">¥ 0.00</div>
           <div id="stat-income-delta" class="text-xs text-emerald-500 mt-2 font-medium">相比上月 +0%</div>
@@ -86,7 +94,7 @@ const title = '看板 · Almanac';
             <div class="p-2 bg-rose-50 text-rose-600 rounded-lg">
               <i data-lucide="trending-down" class="w-5 h-5"></i>
             </div>
-            <span class="text-sm font-medium text-slate-500">本月支出</span>
+            <span id="label-expense" class="text-sm font-medium text-slate-500">本月支出</span>
           </div>
           <div id="stat-expense" class="text-2xl font-bold text-slate-800">¥ 0.00</div>
           <div id="stat-expense-delta" class="text-xs text-rose-400 mt-2 font-medium">相比上月 +0%</div>
@@ -478,25 +486,79 @@ const title = '看板 · Almanac';
       // ---- Summary cards + chart ----
       const fmtYuan = (cents) => '\u00a5 ' + (Math.abs(cents) / 100).toFixed(2);
 
-      // Month picker: default to current month; changing it reloads everything.
+      // ---- Period selector: month / year / all ----
+      const periodType = document.getElementById('period-type');
       const monthPicker = document.getElementById('month-picker');
-      function selectedMonth() {
-        return monthPicker.value || new Date().toISOString().slice(0, 7);
-      }
-      monthPicker.value = new Date().toISOString().slice(0, 7);
-      monthPicker.onchange = () => { loadSummary(); loadChart(); };
+      const yearPicker = document.getElementById('year-picker');
+      const overviewTitle = document.getElementById('overview-title');
+      const labelIncome = document.getElementById('label-income');
+      const labelExpense = document.getElementById('label-expense');
+      const incomeDelta = document.getElementById('stat-income-delta');
+      const expenseDelta = document.getElementById('stat-expense-delta');
 
-      // pctDelta renders the "vs last month" text; guards divide-by-zero.
+      const now = new Date();
+      monthPicker.value = now.toISOString().slice(0, 7);
+      // Populate the year dropdown: current year back through 6 prior years.
+      const curYear = now.getFullYear();
+      for (let y = curYear; y >= curYear - 6; y--) {
+        const opt = document.createElement('option');
+        opt.value = String(y);
+        opt.textContent = y + '\u5e74';
+        yearPicker.appendChild(opt);
+      }
+      yearPicker.value = String(curYear);
+
+      // currentPeriod returns the {period, value} pair for the active selection.
+      function currentPeriod() {
+        const p = periodType.value;
+        if (p === 'year') return { period: 'year', value: yearPicker.value };
+        if (p === 'all') return { period: 'all', value: '' };
+        return { period: 'month', value: monthPicker.value || now.toISOString().slice(0, 7) };
+      }
+
+      // periodQuery builds the shared `?period=&value=` query string.
+      function periodQuery() {
+        const { period, value } = currentPeriod();
+        return value ? `period=${period}&value=${value}` : `period=${period}`;
+      }
+
+      // syncPeriodUI toggles the value selector visibility and relabels cards.
+      function syncPeriodUI() {
+        const p = periodType.value;
+        monthPicker.classList.toggle('hidden', p !== 'month');
+        yearPicker.classList.toggle('hidden', p !== 'year');
+        const noun = p === 'year' ? '\u672c\u5e74' : (p === 'all' ? '\u7d2f\u8ba1' : '\u672c\u6708');
+        overviewTitle.textContent = noun + '\u6982\u89c8';
+        labelIncome.textContent = noun + '\u6536\u5165';
+        labelExpense.textContent = noun + '\u652f\u51fa';
+        // All-time has no comparison period: hide deltas entirely.
+        const hideDelta = (p === 'all');
+        incomeDelta.classList.toggle('hidden', hideDelta);
+        expenseDelta.classList.toggle('hidden', hideDelta);
+      }
+
+      // deltaWord is the "vs prior period" prefix, tracking the period type.
+      function deltaWord() {
+        return periodType.value === 'year' ? '\u8f83\u4e0a\u5e74 ' : '\u8f83\u4e0a\u6708 ';
+      }
+
+      function reloadAll() { syncPeriodUI(); loadSummary(); loadChart(); }
+      periodType.onchange = reloadAll;
+      monthPicker.onchange = () => { loadSummary(); loadChart(); };
+      yearPicker.onchange = () => { loadSummary(); loadChart(); };
+      syncPeriodUI();
+
+      // pctDelta renders the "vs prior period" text; guards divide-by-zero.
       function pctDelta(cur, prev) {
-        // 上月为 0 时百分比无意义，改为直接展示本月新增的实际金额。
-        if (prev === 0) return cur === 0 ? '\u4e0e\u4e0a\u6708\u6301\u5e73' : '\u8f83\u4e0a\u6708 ' + fmtYuan(cur);
+        // 上期为 0 时百分比无意义，改为直接展示本期新增的实际金额。
+        if (prev === 0) return cur === 0 ? '\u4e0e\u4e0a\u671f\u6301\u5e73' : deltaWord() + fmtYuan(cur);
         const p = Math.round(((cur - prev) / prev) * 100);
-        return '\u8f83\u4e0a\u6708 ' + (p >= 0 ? '+' : '') + p + '%';
+        return deltaWord() + (p >= 0 ? '+' : '') + p + '%';
       }
 
       async function loadSummary() {
         try {
-          const res = await fetch(`/api/summary?month=${selectedMonth()}`);
+          const res = await fetch(`/api/summary?${periodQuery()}`);
           const d = await res.json();
           document.getElementById('stat-income').textContent = fmtYuan(d.income_cents);
           document.getElementById('stat-expense').textContent = fmtYuan(d.expense_cents);
@@ -533,7 +595,7 @@ const title = '看板 · Almanac';
         const empty = document.getElementById(emptyId);
         const canvas = document.getElementById(canvasId);
         try {
-          const res = await fetch(`/api/summary/by-category?month=${selectedMonth()}&direction=${direction}`);
+          const res = await fetch(`/api/summary/by-category?${periodQuery()}&direction=${direction}`);
           const d = await res.json();
           const slices = d.slices || [];
           const existing = get();

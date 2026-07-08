@@ -493,23 +493,50 @@ func summaryHandler(st *store.Store) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
 			return
 		}
-		month := r.URL.Query().Get("month")
-		if month == "" {
-			month = currentMonthKey()
-		}
-		sum, err := st.SummaryByMonth(u.ID, month)
+		period, value := parseSummaryPeriod(r)
+		sum, err := st.SummaryByPeriod(u.ID, period, value)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid month"})
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid period"})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(sum)
 	}
 }
 
+// parseSummaryPeriod extracts the period type and its value from a summary
+// request, supporting the new `?period=&value=` form and the legacy `?month=`.
+// Defaults to the current CST month when nothing is supplied.
+func parseSummaryPeriod(r *http.Request) (period, value string) {
+	period = r.URL.Query().Get("period")
+	value = r.URL.Query().Get("value")
+	if period == "" {
+		// Legacy: ?month=YYYY-MM (or nothing -> current month).
+		period = "month"
+		if value == "" {
+			value = r.URL.Query().Get("month")
+		}
+	}
+	switch period {
+	case "month":
+		if value == "" {
+			value = currentMonthKey()
+		}
+	case "year":
+		if value == "" {
+			value = currentMonthKey()[:4]
+		}
+	case "all":
+		value = ""
+	}
+	return period, value
+}
+
 // summaryByCategoryResponse wraps the per-category breakdown slices.
 type summaryByCategoryResponse struct {
 	Month     string                `json:"month"`
+	Period    string                `json:"period"`
+	Value     string                `json:"value"`
 	Direction int                   `json:"direction"`
 	Slices    []store.CategorySlice `json:"slices"`
 }
@@ -530,24 +557,23 @@ func summaryByCategoryHandler(st *store.Store) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(errorResponse{Error: "unauthorized"})
 			return
 		}
-		month := r.URL.Query().Get("month")
-		if month == "" {
-			month = currentMonthKey()
-		}
+		period, value := parseSummaryPeriod(r)
 		direction := -1
 		if v := r.URL.Query().Get("direction"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && (n == 1 || n == -1) {
 				direction = n
 			}
 		}
-		slices, err := st.SummaryByCategory(u.ID, month, direction)
+		slices, err := st.SummaryByCategoryPeriod(u.ID, period, value, direction)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid month"})
+			_ = json.NewEncoder(w).Encode(errorResponse{Error: "invalid period"})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(summaryByCategoryResponse{
-			Month:     month,
+			Month:     value,
+			Period:    period,
+			Value:     value,
 			Direction: direction,
 			Slices:    slices,
 		})

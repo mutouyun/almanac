@@ -1,6 +1,6 @@
-# Almanac Ledger 技术概要设计文档 v1.6
+# Almanac Ledger 技术概要设计文档 v1.7
 
-> 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.6)、`docs/ledger_data_model.md` (v2.9)
+> 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.7)、`docs/ledger_data_model.md` (v2.9)
 > 本文承接需求、交互与数据模型，定义系统的技术实现骨架：整体架构、关键查询、路由引擎、鉴权安全、API 端点与非功能落地。**不重复数据模型的表结构定义**（见数据模型文档），仅引用并补充实现细节。
 
 ## 1. 整体架构
@@ -343,10 +343,12 @@ flowchart TD
 ### 6.4 看板端点
 | 方法 | 路径 | 鉴权 | 参数 | 响应 |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/summary` | Session | `?month=YYYY-MM`（缺省当月 CST） | 月度卡片：`{month, income_cents, expense_cents, balance_cents, unclassified_cents, unclassified_count, prev_income_cents, prev_expense_cents}` |
-| GET | `/api/summary/by-category` | Session | `?month=YYYY-MM&direction=-1`（缺省支出） | 一级根分类饼图：`{month, direction, slices:[{category_id, name, direction, total_cents}]}`（按 total 降序，已卷到根） |
+| GET | `/api/summary` | Session | `?period=month\|year\|all&value=`（周期值：`month`→`YYYY-MM`、`year`→`YYYY`、`all` 无需 value；缺省 `period=month`+当月 CST；向后兼容旧 `?month=`） | 周期卡片：`{period, value, income_cents, expense_cents, balance_cents, unclassified_cents, unclassified_count, prev_income_cents, prev_expense_cents}`（`all` 档 `prev_*`=0，前端隐藏环比） |
+| GET | `/api/summary/by-category` | Session | `?period=month\|year\|all&value=&direction=-1`（缺省支出；向后兼容旧 `?month=`） | 一级根分类饼图：`{period, value, direction, slices:[{category_id, name, direction, total_cents}]}`（按 total 降序，已卷到根） |
 
-> 拆为两个端点（而非单个 `/api/dashboard`）：卡片与饼图职责分离，饼图切换方向（收/支）时只重拉 by-category。卡片携上月同项（`prev_*`）供前端算真实环比。
+> 拆为两个端点（而非单个 `/api/dashboard`）：卡片与饼图职责分离，饼图切换方向（收/支）时只重拉 by-category。卡片携上周期同项（`prev_*`）供前端算真实环比。
+>
+> **周期聚合实现要点**：`monthRange` 泛化为 `periodRange(period, value)`，统一返回 `[start, end)` 与上一周期 `[prevStart, prevEnd)` 的墙钟字符串边界（`YYYY-MM-DD HH:mm`，字典序==时序）。month 同现有逻辑；year 取当年 `[YYYY-01-01, 次年)` + 上年；`all` 边界置空，SQL 跳过 `record_time` 区间过滤且无 prev（`prev_*`=0）。方向与未分类统计逻辑跨周期一致，不变。
 
 ### 6.5 账目端点
 | 方法 | 路径 | 鉴权 | 参数 / 请求体 | 响应 |
@@ -497,3 +499,4 @@ func (s *Store) migrate() error {
 - v1.4 (2026-07-07)：**账户管理页现代化 + 上次登录时间**。§5.3 登录校验补“成功后 best-effort 回写 `last_login_at`”步骤（`UpdateLastLogin`，写失败不阻塞登录）；§6.8 `GET /api/users` 响应补 `last_login_at`（空串=从未登录）。代码：`store.go` 新增 `last_login_at` 列 + 幂等迁移 `migrateLastLogin` + `UpdateLastLogin`，`UserInfo`/`ListUsers` 返回该字段（`COALESCE(...,'')`）；`main.go` 登录 handler 回写登录时间；前端 `admin/users.astro` 重写为 Tailwind + 侧边栏 + Lucide 风格（头像/徐章/创建时间/上次登录卡片行，改密/删除改用弹窗 dialog），`Sidebar.astro` 加管理员可见的“账户管理”入口。
 - v1.5 (2026-07-07)：**CSV 导入（A 方案：复用路由引擎）对齐**。靶定「毛线记账本」App 导出格式（UTF-8 无 BOM、列 `账单日,账本,类别,子类别,金额,备注,创建时间`）。§6.7 补「支持的 CSV 格式」小节：列映射（账单日→record_time、金额→amount_cents、备注→note，创建时间/账本列忽略）、方向不取自 CSV 而由归类分类派生、归类输入按「子类别优先→退回类别」当作等价 webhook `type`、匹配算法与优先级完全复用 `RouteEntry`。§5.6/§7.7 去重改为一期不做自动去重（无稳定单号）、靠「预览→确认」两步把关 + 逐行容错。端点沿用 `/api/import/csv`（预览）+ `/api/import/confirm`（确认）。
 - v1.6 (2026-07-08)：**账目批量操作（改分类/删除）**。§6.5 新增两个批量端点 `POST /api/entries/batch/recategorize` 与 `POST /api/entries/batch/delete`（独立端点，不复用循环调单条），统一返回 `{affected, skipped:[{id,reason}]}`；实现要点覆盖归属隔离（`IN (?) AND user_id`、未命中归 skipped）、方向服务端按新分类重算（不信前端）、目标分类校验、单事务全或无（新增 `UpdateEntriesCategoryTx`/`DeleteEntriesTx`）、数量上限 ≤500 + SQLite 占位符分批。§5.4 多租户隔离补批量接口的归属校验要求。对齐交互设计 v1.6。
+- v1.7 (2026-07-08)：**看板概览周期切换（月/年/全部）**。§6.4 两个汇总端点 `/api/summary` 与 `/api/summary/by-category` 参数由 `month` 泛化为 `period`(month\|year\|all) + `value`（向后兼容旧 `?month=`）；响应加 `period`/`value` 字段，`all` 档 `prev_*`=0。实现要点：`monthRange` 泛化为 `periodRange(period, value)`（返回 `[start,end)` + `[prevStart,prevEnd)` 墙钟边界），year 取当年区间 + 上年，`all` 置空边界使 SQL 跳过 `record_time` 过滤且无 prev/环比；方向与未分类统计逻辑跨周期不变。前端 `dashboard.astro` 顶部改为「概览周期」下拉 + 条件值选择器，卡片/环比文案随周期动态（全部档隐藏环比）。对齐交互设计 v1.7。

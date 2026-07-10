@@ -484,7 +484,7 @@ const title = '看板 · Almanac';
       }
 
       // ---- Summary cards + chart ----
-      const fmtYuan = (cents) => '\u00a5 ' + (Math.abs(cents) / 100).toFixed(2);
+      const fmtYuan = (cents) => (cents < 0 ? '-\u00a5 ' : '\u00a5 ') + (Math.abs(cents) / 100).toFixed(2);
 
       // ---- Period selector: month / year / all ----
       const periodType = document.getElementById('period-type');

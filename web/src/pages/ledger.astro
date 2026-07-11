@@ -103,7 +103,10 @@ const title = '账本明细 · Almanac';
       </section>
 
       <!-- Select-all bar (only shown in selection mode) -->
-      <div id="sel-bar" class="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 mb-4 flex items-center justify-between" hidden>
+      <!-- No `flex` in the static class: Tailwind's .flex would override the
+           [hidden] attribute (same specificity, later in source), keeping the
+           bar visible outside selection mode. JS toggles both hidden + flex. -->
+      <div id="sel-bar" class="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 mb-4 items-center justify-between" hidden>
         <label class="flex items-center gap-2 text-sm font-medium text-slate-700 cursor-pointer">
           <input id="sel-all" type="checkbox" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
           <span>全选本页</span>
@@ -387,7 +390,17 @@ const title = '账本明细 · Almanac';
       }
 
       // applyFilter resets to page 1 and reloads with current filter state.
-      function applyFilter() { offset = 0; loadEntries(); }
+      // Filter changes invalidate the current selection (the previously
+      // selected rows may no longer be in the result set), so clear it and
+      // resync the batch UI to avoid stale selection count/total carrying over.
+      function applyFilter() {
+        offset = 0;
+        if (selectMode) {
+          selected.clear();
+          syncSelectionUI();
+        }
+        loadEntries();
+      }
 
       let kwTimer = null;
       function initFilters() {
@@ -552,6 +565,10 @@ const title = '账本明细 · Almanac';
             const msg = elEmpty.querySelector('p');
             if (msg) msg.textContent = active ? '\u6ca1\u6709\u7b26\u5408\u7b5b\u9009\u6761\u4ef6\u7684\u8d26\u76ee\u3002' : '\u8fd8\u6ca1\u6709\u4efb\u4f55\u8d26\u76ee\uff0c\u70b9\u53f3\u4e0a\u89d2\u5f00\u59cb\u8bb0\u8d26\u5427\u3002';
             elEmpty.hidden = false;
+            // No matching rows: refresh the batch UI so the floating bar's
+            // count/total reset instead of showing the previous result.
+            rowCache = [];
+            if (selectMode) syncSelectionUI();
             return;
           }
           elList.hidden = false;
@@ -661,7 +678,8 @@ const title = '账本明细 · Almanac';
         selected.clear();
         const selAll = document.getElementById('sel-all');
         if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
-        document.getElementById('sel-bar').hidden = false;
+        const selBar = document.getElementById('sel-bar');
+        selBar.hidden = false; selBar.classList.add('flex');
         loadEntries();
       }
       function exitSelectMode() {
@@ -669,7 +687,8 @@ const title = '账本明细 · Almanac';
         selected.clear();
         const selAll = document.getElementById('sel-all');
         if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
-        document.getElementById('sel-bar').hidden = true;
+        const selBar = document.getElementById('sel-bar');
+        selBar.hidden = true; selBar.classList.remove('flex');
         const bar = document.getElementById('batch-bar');
         bar.hidden = true; bar.classList.remove('flex');
         loadEntries();

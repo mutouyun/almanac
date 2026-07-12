@@ -1,6 +1,6 @@
-# Almanac Ledger 技术概要设计文档 v1.7
+# Almanac Ledger 技术概要设计文档 v1.8
 
-> 上游依据：`docs/ledger_requirements.md` (v1.14)、`docs/ledger_interaction_design.md` (v1.7)、`docs/ledger_data_model.md` (v2.9)
+> 上游依据：`docs/ledger_requirements.md` (v1.15)、`docs/ledger_interaction_design.md` (v1.8)、`docs/ledger_data_model.md` (v2.9)
 > 本文承接需求、交互与数据模型，定义系统的技术实现骨架：整体架构、关键查询、路由引擎、鉴权安全、API 端点与非功能落地。**不重复数据模型的表结构定义**（见数据模型文档），仅引用并补充实现细节。
 
 ## 1. 整体架构
@@ -354,6 +354,7 @@ flowchart TD
 | 方法 | 路径 | 鉴权 | 参数 / 请求体 | 响应 |
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/api/entries` | Session | `?month=&category_id=&unclassified=&page=&limit=` | 分页账目列表（含分类路径） |
+| GET | `/api/entries/export` | Session | 同列表筛选参数（`q/start/end/period/month/direction/category/min/max`），无分页 | 将当前筛选视图全量导出为 UTF-8(BOM) CSV 附件（详 §6.9） |
 | POST | `/api/entries` | Session | `{record_time, category_id, amount, raw_type, note}` | 创建账目（手动记账） |
 | PATCH | `/api/entries/{id}` | Session | `{category_id}` | 更新分类（待分类关联） |
 | DELETE | `/api/entries/{id}` | Session | 无 | 删除账目（验证 user_id） |
@@ -407,6 +408,20 @@ flowchart TD
 - **重置密码即登出**：管理员重置某用户密码后，调 `DeleteUserSessions` 清掉该用户所有活动会话，强制其用新密码重登。
 - **创建账户复用播种逻辑**：bcrypt 哈希 + 随机 webhook_token + 默认账本，与 `seedAdmin` 一致（但 `is_admin=0`）。
 - **密码长度**：新建与重置均沿用 `minPasswordLen ≥ 6` 校验。
+
+### 6.9 账目导出端点
+| 方法 | 路径 | 鉴权 | 参数 | 响应 |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/entries/export` | Session | 与 `GET /api/entries` 同一套筛选参数（`q/start/end/period/month/direction/category/min/max`），**无分页参数** | `text/csv; charset=utf-8` 附件，`Content-Disposition` 带 RFC 5987 `filename*` 编码的中文文件名 |
+
+**实现要点（与列表页共享筛选，不重复参数解析）：**
+- **筛选单一事实来源**：列表（`/api/entries`）与导出（`/api/entries/export`）共用 `buildEntryFilter(st, r, u)` 把 query 参数翻译成 `store.EntryFilter`，两者对“当前视图”的定义永远一致（看到的即导出的）。
+- **分页拉取、内存有界**：按 `exportPageSize`（= store 最大页 200）循环调 `ListEntries` 流式写出，绝不一次性把整份账本拉进内存；行数再大也不爆内存。
+- **UTF-8 BOM**：写 CSV 前先输出 `EF BB BF`，保证 Excel 识别编码不乱码。
+- **列集 = 导入格式超集**：`账单日, 类别, 子类别, 金额, 方向, 来源, 备注`。前四列兼容 §6.7 导入格式（导入侧忽略未知列、按表头名取所需列），故导出文件可直接再导入回系统。分类路径 `root>child>leaf` 拆为（类别=root, 子类别=leaf），中间层丢弃（导入侧只读子类别、空则退回类别，回系重归类仍正确）。
+- **金额无符号**：`centsToYuanExport` 把 cents 转为 magnitude 元字符串（绝对值、最多 2 位小数、尾零修剪），与导入侧一致（方向由分类派生，不靠金额符号承载）；`方向` 列输出人类可读标签（收入/支出/未分类）。
+- **流中出错容错**：已写入 header 后若某页 `ListEntries` 失败，先 flush 已有行并 break（部分文件胜过中途 500）；HTTP 状态已发出无法回滚。
+- **鉴权与隔离**：走 Session 鉴权，未登录返 401；`ListEntries` 已带 `user_id` 过滤，只导出当前用户自己账本。
 
 ## 7. 非功能落地
 
@@ -500,3 +515,4 @@ func (s *Store) migrate() error {
 - v1.5 (2026-07-07)：**CSV 导入（A 方案：复用路由引擎）对齐**。靶定「毛线记账本」App 导出格式（UTF-8 无 BOM、列 `账单日,账本,类别,子类别,金额,备注,创建时间`）。§6.7 补「支持的 CSV 格式」小节：列映射（账单日→record_time、金额→amount_cents、备注→note，创建时间/账本列忽略）、方向不取自 CSV 而由归类分类派生、归类输入按「子类别优先→退回类别」当作等价 webhook `type`、匹配算法与优先级完全复用 `RouteEntry`。§5.6/§7.7 去重改为一期不做自动去重（无稳定单号）、靠「预览→确认」两步把关 + 逐行容错。端点沿用 `/api/import/csv`（预览）+ `/api/import/confirm`（确认）。
 - v1.6 (2026-07-08)：**账目批量操作（改分类/删除）**。§6.5 新增两个批量端点 `POST /api/entries/batch/recategorize` 与 `POST /api/entries/batch/delete`（独立端点，不复用循环调单条），统一返回 `{affected, skipped:[{id,reason}]}`；实现要点覆盖归属隔离（`IN (?) AND user_id`、未命中归 skipped）、方向服务端按新分类重算（不信前端）、目标分类校验、单事务全或无（新增 `UpdateEntriesCategoryTx`/`DeleteEntriesTx`）、数量上限 ≤500 + SQLite 占位符分批。§5.4 多租户隔离补批量接口的归属校验要求。对齐交互设计 v1.6。
 - v1.7 (2026-07-08)：**看板概览周期切换（月/年/全部）**。§6.4 两个汇总端点 `/api/summary` 与 `/api/summary/by-category` 参数由 `month` 泛化为 `period`(month\|year\|all) + `value`（向后兼容旧 `?month=`）；响应加 `period`/`value` 字段，`all` 档 `prev_*`=0。实现要点：`monthRange` 泛化为 `periodRange(period, value)`（返回 `[start,end)` + `[prevStart,prevEnd)` 墙钟边界），year 取当年区间 + 上年，`all` 置空边界使 SQL 跳过 `record_time` 过滤且无 prev/环比；方向与未分类统计逻辑跨周期不变。前端 `dashboard.astro` 顶部改为「概览周期」下拉 + 条件值选择器，卡片/环比文案随周期动态（全部档隐藏环比）。对齐交互设计 v1.7。
+- v1.8 (2026-07-12)：**账目导出 CSV 端点**。§6.5 账目表新增 `GET /api/entries/export` 行，新增 §6.9 专节：导出与列表共享 `buildEntryFilter`（筛选单一事实来源，两者对“当前视图”定义一致）、按 `exportPageSize`(200) 分页拉取流式写出保持内存有界、UTF-8 BOM 防 Excel 乱码、列集为 §6.7 导入格式超集（`账单日/类别/子类别/金额/方向/来源/备注`）可回导、金额无符号 magnitude、流中出错先 flush 部分行、走 Session 鉴权按 `user_id` 隔离。代码：抽出 `buildEntryFilter` 作为列表与导出共用的筛选构造器，新增 `cmd/almanac/export.go`（handler + `centsToYuanExport` + RFC 5987 文件名编码）与 `export_test.go`。对齐需求 v1.15 F6 / 交互设计 v1.8。

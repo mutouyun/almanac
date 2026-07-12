@@ -37,3 +37,9 @@ web/dist/
 web/node_modules/
 cmd/almanac/dist/
 web/.astro/
+
+# Local runtime artifacts (dev DBs, run logs)
+data/
+*.db
+local_run.log
+local_run.err.log

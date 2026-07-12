@@ -406,14 +406,38 @@ func entriesListHandler(st *store.Store, w http.ResponseWriter, r *http.Request,
 		}
 	}
 
+	filter := buildEntryFilter(st, r, u)
+
+	entries, total, err := st.ListEntries(u.ID, filter, limit, offset)
+	if err != nil {
+		log.Printf("list entries error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(entriesResponse{
+		Entries: entries,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+	})
+}
+
+// buildEntryFilter translates the shared query params (q/start/end/period/month/
+// direction/category/min/max) into a store.EntryFilter. It is the single source
+// of truth for both the paginated list (GET /api/entries) and the CSV export
+// (GET /api/entries/export) so the two always agree on what "the current view"
+// means.
+func buildEntryFilter(st *store.Store, r *http.Request, u *store.User) store.EntryFilter {
+	q := r.URL.Query()
 	filter := store.EntryFilter{
 		Keyword:   q.Get("q"),
 		StartTime: strings.TrimSpace(q.Get("start")),
 		EndTime:   strings.TrimSpace(q.Get("end")),
 	}
-	// period: when present, narrow the list to the same [start, end) window the
-	// overview uses (month/year/all). Ignored for "all" (whole history) and
-	// overridden by any explicit start/end above.
+	// period: when present, narrow to the same [start, end) window the overview
+	// uses (month/year/all). Ignored for "all" (whole history) and overridden by
+	// any explicit start/end above.
 	if q.Get("period") != "" || q.Get("month") != "" {
 		period, value := parseSummaryPeriod(r)
 		if start, end, err := store.PeriodRange(period, value); err == nil && start != "" {
@@ -465,20 +489,7 @@ func entriesListHandler(st *store.Store, w http.ResponseWriter, r *http.Request,
 			filter.MaxCents = &c
 		}
 	}
-
-	entries, total, err := st.ListEntries(u.ID, filter, limit, offset)
-	if err != nil {
-		log.Printf("list entries error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(errorResponse{Error: "internal error"})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(entriesResponse{
-		Entries: entries,
-		Total:   total,
-		Limit:   limit,
-		Offset:  offset,
-	})
+	return filter
 }
 
 // currentMonthKey returns the current Asia/Shanghai month as "YYYY-MM". It
@@ -1260,6 +1271,7 @@ func main() {
 	mux.Handle("/api/webhook-token", webhookTokenHandler(st))
 	mux.Handle("/api/webhook-token/reset", webhookTokenResetHandler(st))
 	mux.Handle("/api/entries", entriesHandler(st))
+	mux.Handle("/api/entries/export", exportEntriesHandler(st))
 	mux.Handle("/api/entries/batch/recategorize", batchEntriesHandler(st))
 	mux.Handle("/api/entries/batch/delete", batchEntriesHandler(st))
 	mux.Handle("/api/entries/", entryItemHandler(st))
